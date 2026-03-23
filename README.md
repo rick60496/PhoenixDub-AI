@@ -31,6 +31,49 @@ O PhoenixDub AI se apóia nos ombros de gigantes. Utilizamos modelos de código 
 
 Uma lista completa de bibliotecas e licenças pode ser encontrada em [CREDITS.md](./CREDITS.md).
 
+### 🚀 Como Instalar e Rodar (Tutorial para Iniciantes)
+
+Este projeto foi construído para rodar localmente utilizando o Anaconda. Siga o passo a passo abaixo para garantir que os modelos de IA funcionem de primeira:
+
+#### Passo 1: Preparando o Ambiente (Anaconda)
+1. Baixe e instale o **Miniconda** ou **Anaconda** no seu computador.
+2. ⚠️ **Atenção na Instalação:** Durante o instalador, na tela de "Advanced Options" (Opções Avançadas), marque a caixinha **"Add Anaconda to my PATH environment variable"** (Adicionar ao PATH). Isso é vital para que o programa se comunique com o Windows.
+3. Após instalar, abra o aplicativo **Anaconda Prompt** no menu iniciar.
+
+#### Passo 2: O Token de IA do HuggingFace
+O nosso sistema baixa as inteligências e vozes de alta qualidade direto do HuggingFace (O GitHub das IAs). Você precisa autorizar seu PC para baixar:
+1. Crie uma conta gratuita em [huggingface.co](https://huggingface.co/).
+2. Após logar, acesse a página de Tokens: [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+3. Clique em **"New token"** (Criar novo token). Escolha a permissão "Read" (Leitura) e gere a chave secreta. Mande copiar esse código gigante.
+4. Volte na tela preta do seu **Anaconda Prompt** e digite o seguinte comando:
+   ```bash
+   huggingface-cli login
+   ```
+5. Quando ele pedir o token ("Token:"), cole o código que você copiou (Dica: no CMD/Prompt, ao clicar com o botão direito para colar, o código ficará "invisível" na tela por segurança. É normal. Apenas aperte Enter). 
+6. Quando perguntar sobre *Add token as git credential (Y/n)*, aperte `n` e depois Enter. Pronto! Seu PC tem a chave do hangar.
+
+#### Passo 3: Instalação Automática (Setup)
+O nosso sistema possui um instalador interativo robusto que fará todo o trabalho pesado para você (Criar a arquitetura com Python 3.10, baixar softwares externos como FFmpeg, e instalar as Inteligências Artificiais via PIP):
+1. Abra o **Anaconda Prompt** e navegue até a pasta central do PhoenixDub:
+   ```bash
+   cd C:\IA_dublagem
+   ```
+2. Inicie o menu do instalador digitando:
+   ```bash
+   python setup.py
+   ```
+3. Digite `1` e pressione **Enter** (Instalar Novo Ambiente). A tela começará a descer uma cachoeira de logs de download (pode ir tomar um café, são muitos arquivos pesados).
+4. Quando a mensagem verde de sucesso aparecer, seu sistema estará pronto!
+
+#### Passo 4: Abrindo a Interface PhoenixDub
+Sempre que for usar o programa no seu dia a dia, abra o Anaconda Prompt e ative a "mente" dele antes de abrir o robô:
+```bash
+conda activate C:\IA_Dublagem_Files\env
+cd C:\IA_dublagem
+python app_jogos.py
+```
+(Ou `python App_videos.py` para filmes longos). A interface abrirá magicamente no seu navegador!
+
 ### 👤 Autor e Criador Original
 
 **Paulo Henrik Carvalho de Araújo**
@@ -70,6 +113,49 @@ PhoenixDub AI stands on the shoulders of giants. We utilize state-of-the-art ope
 *   **Audio Core**: PyDub, Librosa & FFmpeg.
 
 A full list of libraries and licenses can be found in [CREDITS.md](./CREDITS.md).
+
+### 🚀 How to Install and Run (Beginner's Guide)
+
+This project leverages heavy AI models running locally. Follow the step-by-step Anaconda guide below to ensure a smooth first run:
+
+#### Step 1: Preparing the Anaconda Environment
+1. Download and install **Miniconda** or **Anaconda** on your computer.
+2. ⚠️ **Installation Warning:** During the installer, on the "Advanced Options" screen, make sure to check the box **"Add Anaconda to my PATH environment variable"**. This is essential for the system to access the correct python executable.
+3. After installing, open the **Anaconda Prompt** via your start menu.
+
+#### Step 2: The HuggingFace Magic Token
+Our system downloads high-quality voices and translation AI models directly from HuggingFace. You need to authorize your local PC mapping:
+1. Create a free account at [huggingface.co](https://huggingface.co/).
+2. Once logged in, visit the tokens settings: [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+3. Click on **"New token"**. Select the "Read" permission and generate the secret key. Copy the giant token code completely.
+4. Go back to your **Anaconda Prompt** black screen and type the following command:
+   ```bash
+   huggingface-cli login
+   ```
+5. When it prompts for "Token:", paste the code you just copied. (Note: when you right-click to paste in the prompt, the characters remain "invisible" for security purposes. This is normal. Just press Enter).
+6. When asked about *Add token as git credential (Y/n)*, press `n` and then Enter. Done! Connection established.
+
+#### Step 3: Automatic Installation (Setup)
+Our system features a robust interactive installer that will do all the heavy lifting for you (Creating the Python 3.10 architecture, downloading external software like FFmpeg, and injecting PIP dependencies automatically):
+1. Inside the **Anaconda Prompt**, navigate to the project's root folder:
+   ```bash
+   cd C:\IA_dublagem
+   ```
+2. Run the interactive setup menu:
+   ```bash
+   python setup.py
+   ```
+3. Type `1` and press **Enter** (Install New Environment). The screen will start cascading down with download logs (grab a coffee, it downloads massive AI PyTorch weights).
+4. Once the green success message pops up, your system is fully built!
+
+#### Step 4: Booting PhoenixDub AI
+Every day, whenever you want to use the software, open your Anaconda Prompt, awaken the isolated virtual mind, and run it:
+```bash
+conda activate C:\IA_Dublagem_Files\env
+cd C:\IA_dublagem
+python app_jogos.py
+```
+(Or run `python App_videos.py` for long-form films). The web interface will magically pop up in your browser!
 
 ### 👤 Author & Original Creator
 
