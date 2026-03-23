@@ -52,7 +52,14 @@ O nosso sistema baixa as inteligências e vozes de alta qualidade direto do Hugg
 5. Quando ele pedir o token ("Token:"), cole o código que você copiou (Dica: no CMD/Prompt, ao clicar com o botão direito para colar, o código ficará "invisível" na tela por segurança. É normal. Apenas aperte Enter). 
 6. Quando perguntar sobre *Add token as git credential (Y/n)*, aperte `n` e depois Enter. Pronto! Seu PC tem a chave do hangar.
 
-#### Passo 3: Instalação Automática (Setup)
+#### Passo 3: O Cérebro de Tradução (Gema)
+A nossa inteligência artificial de tradução roda 100% offline. Para funcionar, você precisa do 'cérebro' do modelo:
+1. Acesse a página correspondente no HuggingFace e faça o download deste arquivo exato: `gemma-3n-E4B-it-Q4_K_M` (Formato GGUF).
+2. Vá até a pasta raiz do seu projeto PhoenixDub (onde ficam os arquivos de código).
+3. Crie uma nova pasta chamada exatamente `models`.
+4. Mova o arquivo `gemma-3n-E4B-it-Q4_K_M` para dentro da pasta `models`.
+
+#### Passo 4: Instalação Automática (Setup)
 O nosso sistema possui um instalador interativo robusto que fará todo o trabalho pesado para você (Criar a arquitetura com Python 3.10, baixar softwares externos como FFmpeg, e instalar as Inteligências Artificiais via PIP):
 1. Abra o **Anaconda Prompt** e navegue até a pasta central do PhoenixDub:
    ```bash
@@ -65,7 +72,7 @@ O nosso sistema possui um instalador interativo robusto que fará todo o trabalh
 3. Digite `1` e pressione **Enter** (Instalar Novo Ambiente). A tela começará a descer uma cachoeira de logs de download (pode ir tomar um café, são muitos arquivos pesados).
 4. Quando a mensagem verde de sucesso aparecer, seu sistema estará pronto!
 
-#### Passo 4: Abrindo a Interface PhoenixDub
+#### Passo 5: Abrindo a Interface PhoenixDub
 Sempre que for usar o programa no seu dia a dia, abra o Anaconda Prompt e ative a "mente" dele antes de abrir o robô:
 ```bash
 conda activate C:\IA_Dublagem_Files\env
@@ -135,7 +142,14 @@ Our system downloads high-quality voices and translation AI models directly from
 5. When it prompts for "Token:", paste the code you just copied. (Note: when you right-click to paste in the prompt, the characters remain "invisible" for security purposes. This is normal. Just press Enter).
 6. When asked about *Add token as git credential (Y/n)*, press `n` and then Enter. Done! Connection established.
 
-#### Step 3: Automatic Installation (Setup)
+#### Step 3: The Translation Brain (Gema)
+Our translation artificial intelligence runs 100% locally. To make it work, you need its explicit weights:
+1. Go to the HuggingFace page and download this exact file model: `gemma-3n-E4B-it-Q4_K_M` (GGUF Format).
+2. Navigate to the root folder of your PhoenixDub project.
+3. Create a brand new folder named exactly `models`.
+4. Move the `gemma-3n-E4B-it-Q4_K_M` file inside the `models` folder.
+
+#### Step 4: Automatic Installation (Setup)
 Our system features a robust interactive installer that will do all the heavy lifting for you (Creating the Python 3.10 architecture, downloading external software like FFmpeg, and injecting PIP dependencies automatically):
 1. Inside the **Anaconda Prompt**, navigate to the project's root folder:
    ```bash
@@ -148,7 +162,7 @@ Our system features a robust interactive installer that will do all the heavy li
 3. Type `1` and press **Enter** (Install New Environment). The screen will start cascading down with download logs (grab a coffee, it downloads massive AI PyTorch weights).
 4. Once the green success message pops up, your system is fully built!
 
-#### Step 4: Booting PhoenixDub AI
+#### Step 5: Booting PhoenixDub AI
 Every day, whenever you want to use the software, open your Anaconda Prompt, awaken the isolated virtual mind, and run it:
 ```bash
 conda activate C:\IA_Dublagem_Files\env
