@@ -1,0 +1,1504 @@
+﻿<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Studio - Production Suite</title>
+    <!-- Fonts & Icons -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Outfit:wght@400;600;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        :root {
+            /* Netflix-like Dark Theme */
+            --bg-body: #141414;
+            --bg-card: #1f1f1f;
+            --bg-card-hover: #2f2f2f;
+            --text-main: #ffffff;
+            --text-muted: #b3b3b3;
+            --accent-video: #e50914;
+            /* Netflix Red equivalent for Video */
+            --accent-game: #10b981;
+            /* Emerald Green for Games */
+            --border: #333333;
+            --radius-card: 4px;
+            /* Sharper corners like thumbnails */
+            --radius-btn: 4px;
+            --shadow-card: 0 4px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-body);
+            color: var(--text-main);
+            height: 100vh;
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        h1,
+        h2,
+        h3,
+        h4 {
+            font-family: 'Outfit', sans-serif;
+            margin: 0;
+        }
+
+        /* --- HEADER --- */
+        .header {
+            padding: 20px 4%;
+            display: flex;
+            align-items: center;
+            background: linear-gradient(to bottom, rgba(0, 0, 0, 0.7) 0%, transparent 100%);
+            position: fixed;
+            top: 0;
+            width: 100%;
+            z-index: 100;
+            transition: background 0.3s;
+        }
+
+        .logo {
+            font-size: 1.8rem;
+            font-weight: 700;
+            color: #e50914;
+            /* Brand Color */
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+        }
+
+        /* --- HERO SECTION --- */
+        .hero {
+            height: 70vh;
+            background: radial-gradient(circle at center, rgba(30, 30, 30, 0.5) 0%, #141414 70%),
+                url('https://images.unsplash.com/photo-1536240478700-b869070f9279?q=80&w=2000&auto=format&fit=crop');
+            /* Abstrato CInematic */
+            background-size: cover;
+            background-position: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            padding: 100px 4% 0 4%;
+            /* Added top padding for header safety */
+            position: relative;
+        }
+
+        .hero::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 100px;
+            background: linear-gradient(to top, #141414, transparent);
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 10;
+            max-width: 700px;
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            margin-bottom: 20px;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+        }
+
+        .hero p {
+            font-size: 1.2rem;
+            color: var(--text-main);
+            margin-bottom: 30px;
+            line-height: 1.5;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+        }
+
+        .cta-btn {
+            background: #fff;
+            color: #141414;
+            padding: 12px 28px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            transition: transform 0.2s, background 0.2s;
+        }
+
+        .cta-btn:hover {
+            background: #e6e6e6;
+            transform: scale(1.05);
+        }
+
+        /* --- ROWS (CATEGORIES) --- */
+        .category-rows {
+            padding: 20px 0 60px 0;
+            position: relative;
+            z-index: 10;
+            margin-top: -100px;
+            /* Pull up into Hero fade */
+        }
+
+        .row-title {
+            color: #e5e5e5;
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin: 0 4% 15px 4%;
+        }
+
+        .card-grid {
+            display: flex;
+            gap: 12px;
+            padding: 0 4%;
+            overflow-x: auto;
+            padding-bottom: 40px;
+            /* Space for hover expansion */
+            scrollbar-width: none;
+            /* Hide scrollbar Firefox */
+        }
+
+        .card-grid::-webkit-scrollbar {
+            display: none;
+            /* Hide scrollbar Chrome */
+        }
+
+        .tool-card {
+            min-width: 250px;
+            height: 150px;
+            background: var(--bg-card);
+            border-radius: var(--radius-card);
+            position: relative;
+            cursor: pointer;
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .tool-card:hover {
+            transform: scale(1.15);
+            /* Scale Up Effect */
+            background: var(--bg-card-hover);
+            z-index: 50;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.7);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .card-bg-icon {
+            position: absolute;
+            right: -20px;
+            bottom: -20px;
+            font-size: 8rem;
+            opacity: 0.05;
+            color: white;
+            transition: opacity 0.3s;
+        }
+
+        .tool-card:hover .card-bg-icon {
+            opacity: 0.1;
+        }
+
+        .card-content {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(to top, rgba(0, 0, 0, 0.9), transparent);
+        }
+
+        .tool-title {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .tool-desc {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            opacity: 0;
+            /* Hide initially */
+            transform: translateY(10px);
+            transition: all 0.3s 0.1s;
+            /* Delay */
+            height: 0;
+        }
+
+        .tool-card:hover .tool-desc {
+            opacity: 1;
+            transform: translateY(0);
+            height: auto;
+        }
+
+        /* --- MODAL (OVERLAY) --- */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            /* Dimmed background */
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            backdrop-filter: blur(5px);
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+
+        .modal-body {
+            background: #18181b;
+            width: 95%;
+            max-width: 700px;
+            /* v8.3: Aumentado de 500px para acomodar melhor vídeos */
+            max-height: 90vh;
+            /* v8.3: Limita altura a 90% da tela */
+            overflow-y: auto;
+            /* v8.3: Adiciona scroll vertical se transbordar */
+            border-radius: 8px;
+            padding: 0;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
+            border: 1px solid #333;
+            animation: scaleIn 0.3s ease;
+            position: relative;
+        }
+
+        @keyframes scaleIn {
+            from {
+                transform: scale(0.9);
+            }
+
+            to {
+                transform: scale(1);
+            }
+        }
+
+        .modal-header-img {
+            height: 120px;
+            background: linear-gradient(to right, #222, #333);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 3rem;
+            color: rgba(255, 255, 255, 0.1);
+        }
+
+        .modal-content-inner {
+            padding: 24px;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            background: rgba(0, 0, 0, 0.5);
+            border: none;
+            color: #fff;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-close:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        /* --- FORM STYLES --- */
+        input,
+        select,
+        textarea {
+            width: 100%;
+            background: #27272a;
+            border: 1px solid #3f3f46;
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: inherit;
+            margin-top: 5px;
+        }
+
+        input:focus,
+        select:focus,
+        textarea:focus {
+            outline: none;
+            border-color: var(--text-muted);
+        }
+
+        label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 12px;
+            display: block;
+        }
+
+        .primary-btn {
+            background: #e50914;
+            color: white;
+            border: none;
+            width: 100%;
+            padding: 12px;
+            font-weight: 600;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-top: 20px;
+            transition: background 0.2s;
+        }
+
+        .primary-btn:hover {
+            background: #b2070f;
+        }
+
+        /* Loading Overlay */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- CINEMA INTRO OVERLAY -->
+    <div
+        style="position:fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:9999; display:flex; align-items:center; justify-content:center; animation: fadeOut 1s ease-in-out 2s forwards; pointer-events:none;">
+        <h1
+            style="color:#e50914; font-size:4rem; font-weight:800; letter-spacing:4px; animation: zoomIn 2s ease-out forwards;">
+            AI STUDIO</h1>
+    </div>
+    <style>
+        @keyframes fadeOut {
+            to {
+                opacity: 0;
+            }
+        }
+
+        @keyframes zoomIn {
+            from {
+                transform: scale(0.8);
+                opacity: 0;
+            }
+
+            to {
+                transform: scale(1.1);
+                opacity: 1;
+            }
+        }
+    </style>
+
+    <!-- Header -->
+    <div class="header">
+        <div class="logo">AI STUDIO <span style="font-size:0.8rem; color:#666; vertical-align:middle;">v2.1</span></div>
+    </div>
+
+    <!-- Hero -->
+    <div class="hero">
+        <div class="hero-content">
+            <h1>Crie sem limites.</h1>
+            <p>Dublagem, tradução e edição em nível de estúdio com inteligência artificial. Selecione uma ferramenta
+                abaixo para começar.</p>
+            <button class="cta-btn" onclick="document.getElementById('videos-row').scrollIntoView({behavior:'smooth'})">
+                <i class="fas fa-play"></i> Começar Agora
+            </button>
+        </div>
+    </div>
+
+
+    <!-- Main Content Rows -->
+    <div class="category-rows" id="videos-row">
+
+        <!-- ROW 0: PROJECTS (Dynamically Loaded) -->
+        <div id="projects-section" style="display:block; margin-bottom:30px;">
+            <h3 class="row-title" style="color:#e5e5e5; font-weight:700;">Continuar Editando</h3>
+            <div class="card-grid" id="projects-grid">
+                <!-- Injected via JS -->
+            </div>
+        </div>
+
+        <!-- ROW 1: VIDEO -->
+        <h3 class="row-title">Estúdio de Vídeo</h3>
+        <div class="card-grid">
+
+            <!-- Card 1: Dublagem -->
+            <div class="tool-card" onclick="openTool('dubbing')">
+                <div class="card-bg-icon"><i class="fas fa-microphone-lines"></i></div>
+                <div class="card-content">
+                    <div class="tool-title"><i class="fas fa-globe"></i> Dublagem Clássica</div>
+                    <div class="tool-desc">Traduza e duble vídeos completos (MP4) com vozes naturais.</div>
+                </div>
+            </div>
+
+            <!-- Card 2: Cortes -->
+            <div class="tool-card" onclick="openTool('cut')">
+                <div class="card-bg-icon"><i class="fas fa-scissors"></i></div>
+                <div class="card-content">
+                    <div class="tool-title"><i class="fas fa-cut"></i> Editor Rápido</div>
+                    <div class="tool-desc">Corte trechos precisos de vídeos manualmente.</div>
+                </div>
+            </div>
+
+            <!-- Card 3: Podcast -->
+            <div class="tool-card" onclick="openTool('podcast')">
+                <div class="card-bg-icon"><i class="fas fa-podcast"></i></div>
+                <div class="card-content">
+                    <div class="tool-title"><i class="fas fa-rss"></i> Podcast Maker</div>
+                    <div class="tool-desc">Transforme texto ou PDF em áudio conversacional.</div>
+                </div>
+            </div>
+
+            <!-- Card 4: Transcrição (NOVO) -->
+            <div class="tool-card" onclick="openTool('transcription')">
+                <div class="card-bg-icon"><i class="fas fa-file-alt"></i></div>
+                <div class="card-content">
+                    <div class="tool-title"><i class="fas fa-align-left"></i> Transcrição</div>
+                    <div class="tool-desc">Converta áudio/vídeo em texto (JSON) com Whisper.</div>
+                </div>
+            </div>
+
+            <!-- Card 5: Clean Editor (NOVO) -->
+            <div class="tool-card" style="border-color: rgba(229, 9, 20, 0.4);" onclick="openTool('clean_editor')">
+                <div class="card-bg-icon" style="color:#e50914;"><i class="fas fa-magic"></i></div>
+                <div class="card-content">
+                    <div class="tool-title" style="color:#e50914;"><i class="fas fa-ban"></i> Clean Editor</div>
+                    <div class="tool-desc">Censura cirúrgica de palavras em áudio/vídeo com IA.</div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- ROW 2: GAMES -->
+        <h3 class="row-title" style="margin-top:20px;">Estúdio de Jogos</h3>
+        <div class="card-grid">
+
+            <!-- Card 1: Game Dub -->
+            <div class="tool-card" style="border-color: rgba(16, 185, 129, 0.3);" onclick="openTool('game')">
+                <div class="card-bg-icon" style="color:#10b981;"><i class="fas fa-gamepad"></i></div>
+                <div class="card-content">
+                    <div class="tool-title" style="color:#10b981;"><i class="fas fa-headset"></i> Dublagem de Jogos
+                    </div>
+                    <div class="tool-desc">Processamento em lote para milhares de arquivos de áudio.</div>
+                </div>
+            </div>
+
+            <!-- Card 2: Converter -->
+            <div class="tool-card" onclick="alert('Em Breve!')">
+                <div class="card-bg-icon"><i class="fas fa-sync"></i></div>
+                <div class="card-content">
+                    <div class="tool-title"><i class="fas fa-file-audio"></i> Conversor Universal</div>
+                    <div class="tool-desc">Converta formatos de áudio em massa. (Em Breve)</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- MODAL CONTAINER -->
+    <div id="app-modal" class="modal-overlay">
+        <div class="modal-body">
+            <button class="modal-close" onclick="closeModal()"><i class="fas fa-times"></i></button>
+
+            <!-- Dynamic Header -->
+            <div id="modal-header-bg" class="modal-header-img">
+                <i id="modal-icon" class="fas fa-tools"></i>
+            </div>
+
+            <!-- Dynamic Content -->
+            <div id="modal-mount" class="modal-content-inner">
+                <!-- Forms injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- LOGIC -->
+    <script>
+        // --- MODAL SYSTEM ---
+        const modal = document.getElementById('app-modal');
+        const mount = document.getElementById('modal-mount');
+        const iconContainer = document.getElementById('modal-icon');
+        const headerBg = document.getElementById('modal-header-bg');
+
+        function closeModal() {
+            modal.style.display = 'none';
+        }
+
+        // --- TOOL RENDERERS ---
+
+        function openTool(type) {
+            modal.style.display = 'flex';
+            mount.innerHTML = ''; // Clear previous
+
+            if (type === 'dubbing') {
+                renderDubbingForm();
+            } else if (type === 'cut') {
+                renderCutForm();
+            } else if (type === 'podcast') {
+                renderPodcastForm();
+            } else if (type === 'game') {
+                renderGameForm();
+            } else if (type === 'transcription') {
+                renderTranscriptionForm();
+            } else if (type === 'clean_editor') {
+                renderCleanEditorForm();
+            }
+        }
+
+        // 0. CLEAN EDITOR FORM
+        function renderCleanEditorForm() {
+            iconContainer.className = 'fas fa-magic';
+            headerBg.style.background = 'linear-gradient(to right, #b91c1c, #991b1b)'; // Red like Dubbing
+
+            mount.innerHTML = `
+                <h2 style="margin-bottom:10px;">Clean Editor</h2>
+                <p style="color:#888; margin-bottom:20px; font-size:0.9rem;">Censura cirúrgica de palavras indesejadas.</p>
+                
+                <!-- STEP 1: UPLOAD -->
+                <div id="ce-step-1">
+                    <form id="ce-form">
+                        <label class="upload-area" for="ce-file" style="display:block; border: 2px dashed #444; border-radius: 4px; padding: 30px; text-align: center; cursor: pointer; margin-bottom: 20px;">
+                            <i class="fas fa-music" style="font-size: 2rem; color: #666; margin-bottom:10px;"></i>
+                            <div id="ce-file-name" style="color: #fff;">Selecionar Áudio (MP3/WAV)</div>
+                            <input type="file" id="ce-file" accept="audio/*,video/mp4" style="display:none;" required>
+                        </label>
+                        <button type="submit" class="primary-btn" id="ce-btn-start" disabled>Analisar Áudio</button>
+                    </form>
+                </div>
+
+                <!-- STEP 2: PROCESSING (Wait) -->
+                <div id="ce-step-2" style="display:none; text-align:center; padding: 20px 0;">
+                    <i class="fas fa-cog fa-spin" style="font-size:3rem; color:#e50914; margin-bottom:15px;"></i>
+                    <h3>Processando e Mapeando...</h3>
+                    <div id="ce-status-msg" style="margin-top:10px; font-size:0.85rem; color:#10b981;">A extração pode levar alguns minutos.</div>
+                </div>
+
+                <!-- STEP 3: EDITOR (Select Words) -->
+                <div id="ce-step-3" style="display:none;">
+                    <label style="margin-bottom:5px;">Efeito ao Clicar:</label>
+                    <select id="ce-effect" style="margin-bottom: 15px;">
+                        <option value="ducking">🦆 Ducking (Abaixar Volume 80%) [Recomendado]</option>
+                        <option value="mute">🔇 Mute Completo (Silenciar 100%)</option>
+                        <option value="scratch">💿 Scratch (Reverso Rápido)</option>
+                    </select>
+
+                    <div style="background:#111; padding:15px; border-radius:4px; max-height:250px; overflow-y:auto; border:1px solid #333; line-height:2;" id="ce-transcript">
+                        <!-- Words injected here -->
+                    </div>
+
+                    <button class="primary-btn" id="ce-btn-apply" style="margin-top:15px; background:#10b981;">
+                        <i class="fas fa-check"></i> Mixar e Finalizar
+                    </button>
+                </div>
+
+            `;
+
+            // UI Style Overrides specific to this modal
+            const style = document.createElement('style');
+            style.innerHTML = `
+                .ce-word { display:inline-block; padding:4px 8px; margin:0 4px 8px 0; background:#2a2a2a; border-radius:4px; cursor:pointer; user-select:none; transition:0.2s; border:1px solid transparent; }
+                .ce-word:hover { background:#3a3a3a; }
+                .ce-word.effect-ducking { background:#1e40af; color:#93c5fd; border-color:#3b82f6; opacity:0.8; }
+                .ce-word.effect-mute { background:#7f1d1d; color:#fca5a5; border-color:#ef4444; text-decoration:line-through; }
+                .ce-word.effect-scratch { background:#14532d; color:#86efac; border-color:#22c55e; font-style:italic; }
+            `;
+            mount.appendChild(style);
+
+            // VARIABLES
+            let ceJobId = null;
+            let ceWords = [];
+            let ceEditedWords = [];
+            let cePollInterval = null;
+
+            // Step 1: File Selection
+            document.getElementById('ce-file').onchange = function () {
+                if (this.files[0]) {
+                    document.getElementById('ce-file-name').innerText = this.files[0].name;
+                    document.getElementById('ce-file-name').style.color = '#10b981';
+                    document.getElementById('ce-btn-start').disabled = false;
+                }
+            };
+
+            // Step 1: Form Submit
+            document.getElementById('ce-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const file = document.getElementById('ce-file').files[0];
+                if (!file) return;
+
+                document.getElementById('ce-step-1').style.display = 'none';
+                document.getElementById('ce-step-2').style.display = 'block';
+
+                const fd = new FormData();
+                fd.append('audio_file', file);
+
+                try {
+                    const res = await fetch('/api/clean_editor/upload', { method: 'POST', body: fd });
+                    const data = await res.json();
+
+                    if (data.error) throw new Error(data.error);
+
+                    ceJobId = data.job_id;
+                    cePollInterval = setInterval(checkCeStatus1, 1500);
+                } catch (err) {
+                    alert("Erro ao Iniciar: " + err);
+                    closeModal();
+                }
+            };
+
+            // Polling Phase 1
+            async function checkCeStatus1() {
+                try {
+                    const resStatus = await fetch('/api/clean_editor/status/' + ceJobId);
+                    const statusData = await resStatus.json();
+
+                    const resProg = await fetch('/progress/' + ceJobId);
+                    const progData = await resProg.json();
+
+                    if (progData && progData.etapa) {
+                        document.getElementById('ce-status-msg').innerText = progData.etapa;
+                    }
+
+                    if (statusData.status === 'awaiting_user') {
+                        clearInterval(cePollInterval);
+                        ceWords = statusData.words || [];
+                        openCeEditor();
+                    }
+                } catch (e) { }
+            }
+
+            // Step 3: Open Editor
+            function openCeEditor() {
+                document.getElementById('ce-step-2').style.display = 'none';
+                document.getElementById('ce-step-3').style.display = 'block';
+
+                const container = document.getElementById('ce-transcript');
+                container.innerHTML = '';
+                ceEditedWords = [];
+
+                if (ceWords.length === 0) {
+                    container.innerHTML = "<span style='color:red;'>Nenhuma palavra encontrada.</span>";
+                    return;
+                }
+
+                ceWords.forEach((wObj, idx) => {
+                    const span = document.createElement('span');
+                    span.className = 'ce-word';
+                    span.innerText = wObj.word;
+                    span.onclick = () => toggleWord(span, wObj);
+                    container.appendChild(span);
+                });
+            }
+
+            function toggleWord(span, wObj) {
+                const effect = document.getElementById('ce-effect').value;
+                const existingIdx = ceEditedWords.findIndex(ew => ew.start === wObj.start && ew.end === wObj.end);
+
+                if (existingIdx > -1) {
+                    ceEditedWords.splice(existingIdx, 1);
+                    span.className = 'ce-word';
+                } else {
+                    const payload = { ...wObj, effect: effect };
+                    ceEditedWords.push(payload);
+                    span.className = 'ce-word effect-' + effect;
+                }
+            }
+
+            // Step 3: Apply Mix
+            document.getElementById('ce-btn-apply').onclick = async () => {
+                if (!ceJobId) return;
+
+                document.getElementById('ce-step-3').style.display = 'none';
+                document.getElementById('ce-step-2').style.display = 'block';
+                document.getElementById('ce-status-msg').innerText = 'Mixando Efeitos Cirúrgicos...';
+
+                try {
+                    const res = await fetch('/api/clean_editor/apply', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ job_id: ceJobId, target_words: ceEditedWords })
+                    });
+
+                    const data = await res.json();
+                    if (data.error) throw new Error(data.error);
+
+                    cePollInterval = setInterval(checkCeStatus2, 1000);
+                } catch (e) {
+                    alert("Erro na Mixagem: " + e);
+                    closeModal();
+                }
+            };
+
+            // Polling Phase 2 (Mix)
+            async function checkCeStatus2() {
+                try {
+                    const resStatus = await fetch('/api/clean_editor/status/' + ceJobId);
+                    const statusData = await resStatus.json();
+
+                    if (statusData.status === 'completed') {
+                        clearInterval(cePollInterval);
+
+                        document.getElementById('ce-step-2').style.display = 'none';
+                        mount.innerHTML = `
+                            <div style="text-align:center; padding: 40px 0;">
+                                <i class="fas fa-check-circle" style="font-size:4rem; color:#10b981; margin-bottom:15px;"></i>
+                                <h2 style="margin-bottom:20px;">Áudio Censurado Pronto!</h2>
+                                <a href="${statusData.final_file}" class="primary-btn" style="text-decoration:none; display:inline-block; width:auto; padding:12px 24px;" download>
+                                    <i class="fas fa-download"></i> Baixar Arquivo
+                                </a>
+                            </div>
+                        `;
+                    }
+                } catch (e) { }
+            }
+        }
+
+        // 1. DUBBING FORM
+        function renderDubbingForm() {
+            iconContainer.className = 'fas fa-microphone-lines';
+            headerBg.style.background = 'linear-gradient(to right, #b91c1c, #991b1b)'; // Red
+
+            mount.innerHTML = `
+                            < h2 style = "margin-bottom:10px;" > Dublagem Clássica</h2 >
+                <p style="color:#888; margin-bottom:20px; font-size:0.9rem;">Ideal para filmes e vídeos curtos.</p>
+                
+                <form id="dub-form">
+                    <label>Arquivo de Vídeo (MP4)</label>
+                    <input type="file" id="d-file" accept=".mp4" required>
+
+                    <!-- SELEÇÃO DE IDIOMAS (NOVO) -->
+                    <div style="display:flex; gap:10px; flex-wrap: wrap;">
+                        <div style="flex:1; min-width: 140px;">
+                            <label>Idioma do Vídeo (Origem)</label>
+                            <select id="d-lang-src">
+                                <option value="en" selected>Inglês (Recomendado)</option>
+                                <option value="pt">Português (BR)</option>
+                                <option value="es">Espanhol</option>
+                                <option value="ja">Japonês</option>
+                                <option value="fr">Francês</option>
+                                <option value="de">Alemão</option>
+                                <option value="auto">Auto-Detectar (Arriscado)</option>
+                            </select>
+                        </div>
+                        <div style="flex:1; min-width: 140px;">
+                            <label>Dublar Para (Destino)</label>
+                            <select id="d-lang">
+                                <option value="pt" selected>Português (BR)</option>
+                                <option value="en">Inglês</option>
+                                <option value="es">Espanhol</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="margin-top:10px;">
+                        <label>Configuração de Vozes</label>
+                        <select id="d-spk">
+                            <option value="1">1 Pessoa Fixa (Mono-Voz)</option>
+                            <option value="0">Múltiplos Personagens (Auto)</option>
+                        </select>
+                    </div>
+
+                    <label style="margin-top:15px;">Glossário (Opcional)</label>
+                    <textarea id="d-gloss" rows="2" placeholder="Ex: TermX=TermoY..."></textarea>
+
+                    <button type="submit" class="primary-btn">Iniciar Processamento</button>
+                    <div id="status-msg" style="margin-top:10px; font-size:0.85rem;"></div>
+                </form>
+                        `;
+
+            // Logic
+            document.getElementById('dub-form').onsubmit = async (e) => {
+                e.preventDefault();
+                await handleGenericSubmit('/dublar', {
+                    video: document.getElementById('d-file').files[0],
+                    origem: document.getElementById('d-lang-src').value, // [NOVO] Idioma origem
+                    destino: document.getElementById('d-lang').value,
+                    num_speakers: document.getElementById('d-spk').value
+                });
+            };
+        }
+
+        // 2. GAME FORM
+        function renderGameForm() {
+            iconContainer.className = 'fas fa-gamepad';
+            headerBg.style.background = 'linear-gradient(to right, #047857, #065f46)'; // Green
+
+            mount.innerHTML = `
+                            < h2 style = "margin-bottom:10px;" > Dublagem de Jogos</h2 >
+                <p style="color:#888; margin-bottom:20px; font-size:0.9rem;">Diarização e sincronia para pastas de áudio.</p>
+                
+                <form id="game-form">
+                    <label>Arquivos (.wav ou .zip)</label>
+                    <input type="file" id="g-files" accept=".wav, .zip" multiple required>
+                    <div id="zip-warn" style="color:#ef4444; font-size:0.8rem; margin-top:5px; display:none;">
+                        <i class="fas fa-exclamation-triangle"></i> Acima de 500 arquivos, use ZIP.
+                    </div>
+
+                    <!-- SELEÇÃO DE IDIOMAS (NOVO) -->
+                    <div style="display:flex; gap:10px; flex-wrap: wrap; margin-top:10px;">
+                        <div style="flex:1; min-width: 140px;">
+                            <label>Idioma Original</label>
+                            <select id="g-lang-src">
+                                <option value="en" selected>Inglês (Recomendado)</option>
+                                <option value="pt">Português (BR)</option>
+                                <option value="es">Espanhol</option>
+                                <option value="ja">Japonês</option>
+                                <option value="fr">Francês</option>
+                                <option value="de">Alemão</option>
+                                <option value="auto">Auto-Detectar (Arriscado)</option>
+                            </select>
+                        </div>
+                        <div style="flex:1; min-width: 140px;">
+                            <label>Dublar Para</label>
+                            <select id="g-lang">
+                                <option value="pt" selected>Português (BR)</option>
+                                <option value="en">Inglês</option>
+                                <option value="es">Espanhol</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <label style="margin-top:10px;">Falantes</label>
+                    <select id="g-spk">
+                        <option value="1">1 Voz Unica (Monólogo/NPC)</option>
+                        <option value="0">Auto Detectar (VoiceGuard)</option>
+                        <option value="2">2 Vozes (Diálogo)</option>
+                        <option value="3">3 Vozes</option>
+                        <option value="4">4 Vozes</option>
+                        <option value="5">5 Vozes</option>
+                        <option value="6">6 Vozes</option>
+                    </select>
+
+                    <div style="margin-top:15px; display:flex; align-items:center; gap:10px; background:#27272a; padding:10px; border-radius:4px; border:1px solid #3f3f46;">
+                        <input type="checkbox" id="g-bg" style="width:20px; height:20px; margin:0;">
+                        <label for="g-bg" style="margin:0; color:#fff; cursor:pointer;">Separar áudio de fundo (OpenUnmix)</label>
+                    </div>
+                    <p style="font-size:0.75rem; color:#888; margin-top:5px;">Separa música/efeitos da voz antes de limpar. Mantém a ambiência original.</p>
+
+                    <label style="margin-top:10px;">Perfil de Jogo (Otimização)</label>
+                    <select id="g-game-profile">
+                        <option value="padrao" selected>Nenhum / Padrão</option>
+                        <option value="bioshock">Bioshock (FMOD Optimization - Profissional)</option>
+                        <option value="cod">Call of Duty (Loudness & Compression)</option>
+                        <option value="rpg">RPG/Diálogos (Natural Dynamics)</option>
+                    </select>
+
+                    <label style="margin-top:10px;">Glossário (Opcional)</label>
+                    <input type="text" id="g-gloss" placeholder="Ex: Mana=Mana, Potion=Poção">
+
+                    <button type="submit" class="primary-btn" id="g-btn">Iniciar Lote</button>
+                    <div id="status-msg" style="margin-top:10px; font-size:0.85rem;"></div>
+                </form>
+            `;
+
+            // File Limit Logic from previous fix
+            const fInput = document.getElementById('g-files');
+            fInput.onchange = function () {
+                const count = this.files.length;
+                const btn = document.getElementById('g-btn');
+                const warn = document.getElementById('zip-warn');
+
+                if (count > 500) {
+                    warn.style.display = 'block';
+                    btn.disabled = true;
+                    btn.innerText = "Use ZIP para continuar";
+                    btn.style.opacity = 0.5;
+                } else {
+                    warn.style.display = 'none';
+                    btn.disabled = false;
+                    btn.innerText = "Iniciar Lote";
+                    btn.style.opacity = 1;
+                }
+            };
+
+            document.getElementById('game-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const fd = new FormData();
+                const files = document.getElementById('g-files').files;
+                for (let f of files) fd.append('wav_files', f);
+                fd.append('num_speakers', document.getElementById('g-spk').value);
+                fd.append('preserve_background', document.getElementById('g-bg').checked ? 'true' : 'false');
+                fd.append('origem', document.getElementById('g-lang-src').value);
+                fd.append('destino', document.getElementById('g-lang').value);
+                fd.append('game_profile', document.getElementById('g-game-profile').value);
+
+                // Show Loading
+                showLoading("Enviando arquivos...");
+                try {
+                    const res = await fetch('/dublar_jogos', { method: 'POST', body: fd });
+                    const data = await res.json();
+                    showResult(data);
+                } catch (err) {
+                    showResult({ error: err.message });
+                }
+            };
+        }
+
+        // 3. CUT FORM
+        function renderCutForm() {
+            iconContainer.className = 'fas fa-scissors';
+            headerBg.style.background = 'linear-gradient(to right, #d97706, #b45309)'; // Amber
+
+            mount.innerHTML = `
+                <h2 style="margin-bottom:10px;">Corte Manual (Precisão)</h2>
+                
+                <form id="cut-form">
+                    <label>Vídeo Original</label>
+                    <input type="file" id="c-file" accept="video/*" required>
+                    
+                    <!-- Player Dinâmico -->
+                    <video id="c-player" controls preload="metadata" style="width:100%; border-radius:4px; display:none; margin-top:10px; background:#000; max-height: 250px;"></video>
+                    
+                    <div style="display:flex; gap:10px; margin-top:10px;">
+                        <button type="button" id="btn-set-in" class="primary-btn" style="background:#4b5563; padding:8px; margin-top:0;" disabled><i class="fas fa-step-backward"></i> Marcar Início</button>
+                        <button type="button" id="btn-set-out" class="primary-btn" style="background:#4b5563; padding:8px; margin-top:0;" disabled><i class="fas fa-step-forward"></i> Marcar Fim</button>
+                    </div>
+
+                    <div style="display:flex; gap:10px; margin-top:15px;">
+                        <div style="flex:1"><label>Início (s)</label><input type="text" id="c-start" placeholder="Ex: 5.50" required></div>
+                        <div style="flex:1"><label>Fim (s)</label><input type="text" id="c-end" placeholder="Ex: 12.35" required></div>
+                    </div>
+
+                    <button type="submit" class="primary-btn" style="background:#d97706; margin-top:20px;">
+                        <i class="fas fa-cut"></i> Renderizar Corte
+                    </button>
+                    <div id="status-msg" style="margin-top:10px;"></div>
+                </form>
+            `;
+
+            const fileIn = document.getElementById('c-file');
+            const player = document.getElementById('c-player');
+            const btnIn = document.getElementById('btn-set-in');
+            const btnOut = document.getElementById('btn-set-out');
+            const startInput = document.getElementById('c-start');
+            const endInput = document.getElementById('c-end');
+
+            // Carrega o vídeo direto do HD do usuário para a tela instantaneamente
+            fileIn.onchange = function () {
+                if (this.files[0]) {
+                    const url = URL.createObjectURL(this.files[0]);
+                    player.src = url;
+                    player.style.display = 'block';
+                    btnIn.disabled = false;
+                    btnOut.disabled = false;
+                    btnIn.style.background = '#047857'; // Verde
+                    btnOut.style.background = '#be123c'; // Vermelho
+                }
+            };
+
+            // Captura os milissegundos matematicamente exatos
+            btnIn.onclick = () => { startInput.value = player.currentTime.toFixed(2); };
+            btnOut.onclick = () => { endInput.value = player.currentTime.toFixed(2); };
+
+            // Envio para o Backend
+            document.getElementById('cut-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const fd = new FormData();
+                fd.append('video_file', document.getElementById('c-file').files[0]);
+                fd.append('start_time', document.getElementById('c-start').value);
+                fd.append('end_time', document.getElementById('c-end').value);
+
+                showLoading();
+                try {
+                    const res = await fetch('/manual_cut', { method: 'POST', body: fd });
+                    showResult(await res.json());
+                } catch (err) { showResult({ error: err.message }); }
+            };
+        }
+
+        // 4. PODCAST FORM
+        function renderPodcastForm() {
+            iconContainer.className = 'fas fa-podcast';
+            headerBg.style.background = 'linear-gradient(to right, #7c3aed, #6d28d9)'; // Violet
+
+            mount.innerHTML = `
+                <h2 style="margin-bottom:10px;">Podcast Studio</h2>
+                
+                <form id="pod-form">
+                    <label>Arquivo de Texto/PDF</label>
+                    <input type="file" id="p-file" accept=".txt,.pdf">
+                    <label>Ou cole o texto:</label>
+                    <textarea id="p-text" rows="4"></textarea>
+
+                    <button type="submit" class="primary-btn">Gerar Episódio</button>
+                    <div id="status-msg" style="margin-top:10px;"></div>
+                </form>
+            `;
+            // (Placeholder logic as backend wasn't fully detailed in logs, using generic structure)
+            document.getElementById('pod-form').onsubmit = (e) => {
+                e.preventDefault();
+                alert("Funcionalidade em desenvolvimento!");
+            };
+        }
+
+
+        // --- UTILS ---
+
+        function showLoading(msg = "Processando...") {
+            const status = document.getElementById('status-msg');
+            if (status) {
+                status.innerHTML = `<i class="fas fa-circle-notch fa-spin"></i> ${msg}`;
+                status.style.color = '#fbbf24';
+            }
+        }
+
+        function showResult(data) {
+            const status = document.getElementById('status-msg');
+            if (!status) return;
+
+            if (data.error) {
+                status.innerHTML = `<i class="fas fa-times-circle"></i> Erro: ${data.error}`;
+                status.style.color = '#ef4444';
+            } else {
+                status.innerHTML = `<i class="fas fa-check-circle"></i> Job Criado! ID: ${data.job_id}`;
+                status.style.color = '#10b981';
+                setTimeout(() => closeModal(), 2000);
+            }
+        }
+
+        async function handleGenericSubmit(url, fields) {
+            showLoading();
+            const fd = new FormData();
+            for (let k in fields) fd.append(k, fields[k]);
+
+            try {
+                const res = await fetch(url, { method: 'POST', body: fd });
+                const data = await res.json();
+                showResult(data);
+            } catch (e) {
+                showResult({ error: e.message });
+            }
+        }
+
+        // Header Scroll Effect
+        window.addEventListener('scroll', () => {
+            const header = document.querySelector('.header');
+            if (window.scrollY > 50) {
+                header.style.background = '#141414';
+                header.style.boxShadow = '0 2px 10px rgba(0,0,0,0.5)';
+            } else {
+                header.style.background = 'linear-gradient(to bottom, rgba(0,0,0,0.7) 0%, transparent 100%)';
+                header.style.boxShadow = 'none';
+            }
+        });
+
+        // --- PROJECTS HISTORY LOGIC ---
+        async function loadRecentJobs() {
+            try {
+                const res = await fetch('/recent_jobs');
+                const jobs = await res.json();
+
+                const section = document.getElementById('projects-section');
+                const grid = document.getElementById('projects-grid');
+
+                if (!jobs || jobs.length === 0) {
+                    section.style.display = 'block'; // Always show
+                    grid.innerHTML = '<div style="color:#666; font-style:italic; padding:20px;">Nenhum projeto recente encontrado. Inicie uma nova dublagem!</div>';
+                    return;
+                }
+
+                section.style.display = 'block';
+                grid.innerHTML = ''; // Re-render
+
+                jobs.forEach(job => {
+                    // Determine icon/color based on type
+                    let icon = 'fas fa-tasks';
+                    let color = '#a855f7'; // Default Purple
+
+                    if (job.id.includes('jogos') || job.id.includes('game')) { icon = 'fas fa-gamepad'; color = '#10b981'; }
+                    else if (job.id.includes('dublagem')) { icon = 'fas fa-microphone-lines'; color = '#e50914'; }
+
+                    // Status Badge Color
+                    let statusColor = '#fbbf24'; // processing (yellow)
+                    if (job.status && (job.status.toLowerCase().includes('concl') || job.progress >= 100)) statusColor = '#10b981'; // green
+                    if (job.status && job.status.toLowerCase().includes('erro')) statusColor = '#ef4444'; // red
+
+                    const html = `
+                    <div class="tool-card" onclick="openProjectModal('${job.id}')" style="min-width:280px;">
+                        <div class="card-bg-icon" style="color:${color};"><i class="${icon}"></i></div>
+                        <div class="card-content">
+                            <div class="tool-title" style="color:${color}; justify-content:space-between;">
+                                <span><i class="${icon}"></i> ${job.date}</span>
+                                <span style="font-size:0.7rem; background:${statusColor}; color:black; padding:2px 6px; border-radius:4px;">
+                                    ${(job.status || '...').toUpperCase()}
+                                </span>
+                            </div>
+                            <div style="font-size:0.8rem; color:#ccc; margin-top:4px;">
+                                ${job.etapa || 'Processando...'} <br>
+                                <span style="font-size:0.7rem; color:#fbbf24;"><i class="fas fa-clock"></i> Tempo gasto na dublagem: <b>${job.tempo_decorrido || 'Desconhecido'}</b></span><br>
+                                <span style="font-size:0.75rem; color:#10b981;"><i class="fas fa-file-audio"></i> Dublando <b>${job.duracao_total_formatada || '? m'}</b> de áudios.</span>
+                            </div>
+                            
+                            <!-- Progress Bar -->
+                            <div style="background:#333; height:4px; width:100%; margin-top:10px; border-radius:2px; overflow:hidden;">
+                                <div style="background:${color}; width:${job.progress}%; height:100%;"></div>
+                            </div>
+                            <div style="font-size:0.7rem; text-align:right; margin-top:2px; color:#888;">${job.progress}%</div>
+                        </div>
+                    </div>
+                    `;
+                    grid.innerHTML += html;
+                });
+
+            } catch (e) {
+                console.error("Erro ao carregar projetos:", e);
+                // Fallback for errors (user didn't restart server?)
+                const section = document.getElementById('projects-section');
+                const grid = document.getElementById('projects-grid');
+                if (section && grid) {
+                    section.style.display = 'block';
+                    grid.innerHTML = `
+                        <div class="tool-card" style="border-color:#ef4444; width:100%;">
+                            <div class="card-content" style="position:relative; padding:20px;">
+                                <div class="tool-title" style="color:#ef4444;"><i class="fas fa-exclamation-triangle"></i> Erro de Conexão</div>
+                                <div class="tool-desc" style="opacity:1; transform:none; height:auto; color:white; margin-top:5px;">
+                                    Não foi possível carregar os projetos. <br>
+                                    <b>Por favor, REINICIE o arquivo app_jogos.py no CMD.</b>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+        }
+
+        // --- PROJECT MONITORING ---
+        let activeMonitorInterval = null;
+
+        function openProjectModal(jobId) {
+            modal.style.display = 'flex';
+
+            // Set visuals based on type
+            if (jobId.includes('jogos')) {
+                iconContainer.className = 'fas fa-gamepad';
+                headerBg.style.background = 'linear-gradient(to right, #047857, #065f46)';
+            } else {
+                iconContainer.className = 'fas fa-microphone-lines';
+                headerBg.style.background = 'linear-gradient(to right, #b91c1c, #991b1b)';
+            }
+
+            // Initial Template
+            mount.innerHTML = `
+                <div style="text-align:center; padding-bottom:20px; border-bottom:1px solid #333;">
+                    <h2 style="margin-bottom:5px;">Detalhes do Projeto</h2>
+                    <div style="font-family:monospace; color:#888; font-size:0.8rem;">${jobId}</div>
+                </div>
+
+                <div style="margin-top:20px;">
+                    <label>Status Atual</label>
+                    <div id="mon-status" style="font-size:1.2rem; font-weight:600; color:#fbbf24; margin-bottom:5px;">Aguardando...</div>
+                    <div id="mon-step" style="color:#aaa; font-size:0.9rem;">Clique em Continuar para retomar</div>
+                    <div style="display:flex; justify-content: space-between; margin-top:10px;">
+                        <span style="color:#888; font-size:0.8rem;"><i class="fas fa-clock"></i> Tempo Processando: <b id="mon-time" style="color:#fbbf24;">00:00:00</b></span>
+                        <span style="color:#888; font-size:0.8rem;"><i class="fas fa-file-audio"></i> Dublando: <b id="mon-duration" style="color:#10b981;">--</b></span>
+                    </div>
+
+                    <div style="background:#333; height:10px; border-radius:5px; margin-top:15px; overflow:hidden;">
+                        <div id="mon-bar" style="width:0%; height:100%; background:#fbbf24; transition:width 0.5s;"></div>
+                    </div>
+                    <div id="mon-pct" style="text-align:right; font-size:0.8rem; color:#888; margin-top:5px;">0%</div>
+                </div>
+                
+                <!-- EXPLICIT CONTINUE BUTTON -->
+                <button onclick="triggerResume('${jobId}')" id="btn-resume" class="primary-btn" style="background:#e50914; margin-top:20px; font-size:1.1rem;">
+                    <i class="fas fa-play"></i> CONTINUAR PROJETO
+                </button>
+
+                <div style="margin-top:20px; background:#000; padding:15px; border-radius:6px; font-family:'Courier New', monospace; font-size:0.8rem; max-height:150px; overflow-y:auto; color:#10b981;">
+                     <div id="mon-console">> Aguardando comando...</div>
+                </div>
+
+                <button onclick="closeModal()" class="primary-btn" style="background:#333; margin-top:10px;">Fechar</button>
+            `;
+
+            // Start specific polling
+            if (activeMonitorInterval) clearInterval(activeMonitorInterval);
+            pollProjectDetails(jobId);
+        }
+
+        function triggerResume(jobId) {
+            const consoleLog = document.getElementById('mon-console');
+            const btn = document.getElementById('btn-resume');
+
+            if (consoleLog) consoleLog.innerHTML = `> [COMANDO] Solicitando retomada...<br>` + consoleLog.innerHTML;
+            if (btn) { btn.disabled = true; btn.style.opacity = 0.5; btn.innerText = "Iniciando..."; }
+
+            fetch(`/resume_job/${jobId}`, { method: 'POST' })
+                .then(r => r.json())
+                .then(d => {
+                    if (consoleLog) consoleLog.innerHTML = `> [SYSTEM] ${d.message}<br>` + consoleLog.innerHTML;
+                    if (btn) { btn.innerText = "Rodando..."; }
+                })
+                .catch(e => {
+                    console.error("Erro ao retomar job:", e);
+                    alert("ERRO DE CONEXÃO: O servidor NÃO foi reiniciado.\n\nPor favor, feche a janela preta do CMD e abra o 'app_jogos.py' novamente para aplicar a atualização.");
+                    if (consoleLog) consoleLog.innerHTML = `> [ERRO] Conexão recusada. Reinicie o server.<br>` + consoleLog.innerHTML;
+                    if (btn) { btn.disabled = false; btn.style.opacity = 1; btn.innerText = "Tentar Novamente"; }
+                });
+        }
+
+        let liveTimerInterval = null;
+
+        async function pollProjectDetails(jobId) {
+            const update = async () => {
+                // If modal closed, stop
+                if (modal.style.display === 'none') {
+                    clearInterval(activeMonitorInterval);
+                    if(liveTimerInterval) clearInterval(liveTimerInterval);
+                    return;
+                }
+
+                try {
+                    const res = await fetch(`/progress/${jobId}`);
+                    const data = await res.json();
+
+                    if (!data || Object.keys(data).length === 0) return;
+
+                    const bar = document.getElementById('mon-bar');
+                    const pct = document.getElementById('mon-pct');
+                    const status = document.getElementById('mon-status');
+                    const step = document.getElementById('mon-step');
+                    const consoleLog = document.getElementById('mon-console');
+
+                    if (bar) bar.style.width = data.progress + '%';
+                    if (pct) pct.innerText = data.progress.toFixed(1) + '%';
+                    if (step) step.innerText = data.etapa || 'Aguarde...';
+
+                    if (consoleLog) {
+                        const time = new Date().toLocaleTimeString();
+                        consoleLog.innerHTML = `> [${time}] ${data.subetapa || data.etapa}<br>` + consoleLog.innerHTML;
+                    }
+
+                    if (data.progress >= 100) {
+                        status.innerText = "Concluído!";
+                        status.style.color = "#10b981";
+                        bar.style.background = "#10b981";
+                        if(liveTimerInterval) clearInterval(liveTimerInterval);
+                        // Stop polling eventually
+                        if (data.etapa === 'Concluído') clearInterval(activeMonitorInterval);
+                    }
+                    
+                    // Live UI Timer Tick
+                    if (data.start_time && data.status !== 'completed' && !liveTimerInterval) {
+                        liveTimerInterval = setInterval(() => {
+                            if(document.getElementById('mon-time') && modal.style.display !== 'none') {
+                                let elapsed = Math.floor(Date.now() / 1000) - data.start_time;
+                                if(elapsed >= 0) {
+                                    let hrs = Math.floor(elapsed / 3600);
+                                    let mins = Math.floor((elapsed % 3600) / 60);
+                                    let secs = elapsed % 60;
+                                    let str = (hrs > 0 ? hrs.toString().padStart(2, '0') + ':' : '') + 
+                                              mins.toString().padStart(2, '0') + ':' + 
+                                              secs.toString().padStart(2, '0');
+                                    document.getElementById('mon-time').innerText = str;
+                                }
+                            } else {
+                                clearInterval(liveTimerInterval);
+                            }
+                        }, 1000);
+                    } else if (data.status === 'completed' && document.getElementById('mon-time')) {
+                        document.getElementById('mon-time').innerText = data.tempo_decorrido || 'Concluído';
+                    }
+                    
+                    if (data.duracao_total_formatada && document.getElementById('mon-duration')) {
+                        document.getElementById('mon-duration').innerText = data.duracao_total_formatada;
+                    }
+                } catch (e) {
+                    console.error(e);
+                }
+            };
+
+            update(); // Run once immediately
+            activeMonitorInterval = setInterval(update, 2000); // 2s interval
+        }
+
+        // --- GLOBAL INITIALIZATION ---
+        // Start polling for recent jobs immediately
+        loadRecentJobs();
+        setInterval(loadRecentJobs, 5000); // Refresh list every 5s
+
+        // --- TRANSCRIÇÃO AVULSA ---
+        const dropAreaTranscription = document.getElementById('drop-area-transcription');
+        const fileInputTranscription = document.getElementById('fileInputTranscription');
+        const fileNameTranscription = document.getElementById('file-name-transcription');
+
+        if (dropAreaTranscription) {
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropAreaTranscription.addEventListener(eventName, preventDefaults, false);
+            });
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropAreaTranscription.addEventListener(eventName, () => dropAreaTranscription.classList.add('highlight'), false);
+            });
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropAreaTranscription.addEventListener(eventName, () => dropAreaTranscription.classList.remove('highlight'), false);
+            });
+            dropAreaTranscription.addEventListener('drop', handleDropTranscription, false);
+            dropAreaTranscription.addEventListener('click', () => fileInputTranscription.click());
+            fileInputTranscription.addEventListener('change', (e) => handleFilesTranscription(e.target.files));
+        }
+
+        function handleDropTranscription(e) {
+            let dt = e.dataTransfer;
+            let files = dt.files;
+            handleFilesTranscription(files);
+        }
+
+        let transcriptionFile = null;
+
+        function handleFilesTranscription(files) {
+            if (files.length > 0) {
+                transcriptionFile = files[0];
+                fileNameTranscription.textContent = "Selecionado: " + transcriptionFile.name;
+            }
+        }
+
+        async function iniciarTranscricao() {
+            if (!transcriptionFile) {
+                alert("Por favor, selecione um arquivo primeiro.");
+                return;
+            }
+
+            const btn = document.querySelector("#download-btn-transcription");
+            const status = document.getElementById("status-transcription");
+
+            status.style.display = "block";
+            status.textContent = "Processando... (Isso usa o Whisper, aguarde)";
+            btn.style.display = "none";
+
+            const formData = new FormData();
+            formData.append('file', transcriptionFile);
+
+            try {
+                const response = await fetch('/transcrever_arquivo', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    // Tenta pegar nome do header ou usa fallback
+                    let filename = transcriptionFile.name.split('.')[0] + "_transcription.json";
+
+                    status.textContent = "Concluído!";
+                    btn.href = url;
+                    btn.download = filename;
+                    btn.style.display = "inline-block";
+                    btn.innerText = "Baixar JSON"; // Fix: use innerText or textContent
+                } else {
+                    const err = await response.json();
+                    status.textContent = "Erro: " + (err.error || "Falha na requisição");
+                }
+            } catch (error) {
+                console.error(error);
+                status.textContent = "Erro de conexão.";
+            }
+        }
+        // 5. TRANSCRIPTION FORM (FIXED)
+        function renderTranscriptionForm() {
+            iconContainer.className = 'fas fa-file-alt';
+            headerBg.style.background = 'linear-gradient(to right, #4b5563, #374151)'; // Gray
+
+            mount.innerHTML = `
+                <h2 style="margin-bottom:10px;">Transcrição Avulsa</h2>
+                <p style="color:#888; margin-bottom:20px; font-size:0.9rem;">Transcreva áudio ou vídeo para JSON sem cortes.</p>
+                
+                <form id="transcription-form">
+                    <label>Selecione o Arquivo</label>
+                    <input type="file" id="t-file" accept=".mp3,.wav,.mp4,.mkv,.ogg,.flac,.mpeg" required style="padding: 20px; border: 2px dashed #4b5563; text-align: center;">
+
+                    <button type="submit" class="primary-btn" style="background:#4b5563;">
+                        <i class="fas fa-magic"></i> Iniciar Transcrição
+                    </button>
+                    
+                    <div id="t-status" style="margin-top:15px; font-size:0.9rem; min-height:20px;"></div>
+                    
+                    <a id="t-download" href="#" style="display:none; margin-top:15px; text-decoration:none; background:#10b981; color:white; padding:10px; border-radius:4px; text-align:center;">
+                        <i class="fas fa-download"></i> Baixar JSON
+                    </a>
+                </form>
+            `;
+
+            document.getElementById('transcription-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const fileInput = document.getElementById('t-file');
+                const statusDiv = document.getElementById('t-status');
+                const downloadLink = document.getElementById('t-download');
+
+                if (fileInput.files.length === 0) return;
+
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+
+                statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processando... (Pode demorar dependendo do tamanho)';
+                statusDiv.style.color = "#fbbf24";
+                downloadLink.style.display = 'none';
+
+                try {
+                    const response = await fetch('/transcrever_arquivo', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        const blob = await response.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        let filename = fileInput.files[0].name.split('.')[0] + "_transcricao.txt";
+
+                        statusDiv.textContent = "Concluído com Sucesso!";
+                        statusDiv.style.color = "#10b981";
+
+                        downloadLink.href = url;
+                        downloadLink.download = filename;
+                        downloadLink.style.display = 'block';
+                        downloadLink.innerText = "Clique aqui para baixar Transcrição (TXT)";
+                    } else {
+                        const err = await response.json();
+                        statusDiv.textContent = "Erro: " + (err.error || "Falha desconhecida");
+                        statusDiv.style.color = "#ef4444";
+                    }
+                } catch (err) {
+                    console.error(err);
+                    statusDiv.textContent = "Erro de conexão com o servidor.";
+                    statusDiv.style.color = "#ef4444";
+                }
+            };
+        }
+    </script>
+</body>
+
+</html>
