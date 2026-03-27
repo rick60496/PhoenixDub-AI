@@ -3000,10 +3000,17 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     text_to_speak = seg_data.get('manual_edit_text', '').strip() or seg_data.get('sanitized_text', '')
                     
                     # [v10.88] ANTI-CORTE (TRUQUE DA VÍRGULA)
-                    # O usuário notou que o Chatterbox "grita" ou corta o fôlego abruptamente quando lê 
-                    # um ponto final isolado. Trocamos tudo por vírgula para manter a fluidez natural,
-                    # mantendo reticências (...) intactas caso o usuário tenha digitado.
-                    text_to_speak = re.sub(r'(?<!\.)\.(?!\.)', ',', text_to_speak)
+                    # O usuário notou que o projeto continuava salvando os pontos visíveis no arquivo.
+                    # Agora, além de alterar a variável para o TTS, nós SALVAMOS no JSON de volta
+                    # para que o usuário possa enxergar a mudança na tela antes da voz tocar.
+                    new_text = re.sub(r'(?<!\.)\.(?!\.)', ',', text_to_speak)
+                    if new_text != text_to_speak:
+                        text_to_speak = new_text
+                        if seg_data.get('manual_edit_text', '').strip():
+                            seg_data['manual_edit_text'] = text_to_speak
+                        else:
+                            seg_data['sanitized_text'] = text_to_speak
+                        safe_json_write(project_data, project_data_path)
                     
                     # [DEBUG] Confirma o texto exato que vai para o TTS
                     logging.info(f"Gerando Chatterbox para {seg_data['id']} (Text: '{text_to_speak}')")
