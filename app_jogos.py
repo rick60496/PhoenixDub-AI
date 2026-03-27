@@ -253,17 +253,14 @@ def split_audio_by_speaker(audio_path, job_dir):
         logging.info(f"Diarização Cirúrgica v10.60: detectadas {len(splits)} trocas de voz em '{audio_path.name}'.")
         sound = AudioSegment.from_wav(str(audio_path))
         
-        # Folder para segmentos
-        segment_dir = audio_path.parent / f"{audio_path.stem}_segmentos"
-        segment_dir.mkdir(exist_ok=True)
-        
         # Corte real (Pontos em MS)
         points = [0] + [int(s * 1000) for s in splits] + [len(sound)]
         for i in range(len(points) - 1):
             start, end = points[i], points[i+1]
             if end - start < 300: continue # Ignora micro-cortes
             chunk = sound[start:end]
-            chunk.export(segment_dir / f"{audio_path.stem}_p{i+1:02d}.wav", format="wav")
+            # Exporta DIRETAMENTE na raiz da pasta (sem criar subpastas de _segmentos)
+            chunk.export(audio_path.parent / f"{audio_path.stem}_p{i+1:02d}.wav", format="wav")
             
         # Move original para backup
         backup_dir = job_dir / "_0_ORIGINAIS_BACKUP"
@@ -1216,9 +1213,10 @@ def run_auto_diarization_batch(job_dir, job_id, cb):
         
         duration = get_audio_duration(audio_file)
         
-        # [v10.77] DIARIZATION GRANULARITY (MW3/BIOSHOCK FIX)
-        # Reduzido de 25s para 12s para evitar que homem e mulher fiquem no mesmo arquivo.
-        should_split = duration > 12.0 and num_speakers != 1
+        # [v10.86] DIARIZATION GRANULARITY
+        # Subido de 12s para 25s nativos por recomendação do usuário, garantindo fôlego máximo
+        # para falas, parando cirurgicamente no último limite de palavra antes de estourar 25s.
+        should_split = duration > 25.0 and num_speakers != 1
         
         if not should_split:
             # Caso simples: Copia inteiro (Preserva arquivo original)
@@ -1284,8 +1282,10 @@ def run_auto_diarization_batch(job_dir, job_id, cb):
                     current_group_end = end_ms
                 else:
                     proposed_duration = (end_ms - current_group_start) / 1000.0
-                    # [v10.77] MICRO-CHUNKING: Reduzido de 18s para 10s para pureza de locutor.
-                    if proposed_duration <= 10.0:
+                    # [v10.86] MICRO-CHUNKING: Permite agrupar blocos até 25s.
+                    # Se adicionar a próxima palavra ultrapassar 25s, o bloco atual é fechado
+                    # e um novo bloco começa com a palavra excedente.
+                    if proposed_duration <= 25.0:
                         current_group_end = end_ms
                     else:
                         grouped_chunks.append((current_group_start, current_group_end))
@@ -2976,10 +2976,21 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     logging.info(f"Pulando TTS para '{seg_data['id']}' ({reason}: '{text_clean_check}'). Copiando original.")
                     
                     try:
-                        # Em jogos original file_path is complicated so just silence
                         from pydub import AudioSegment
-                        dur_ms = int(seg_data['duration']*1000)
-                        AudioSegment.silent(duration=dur_ms).export(output_path, format="wav")
+                        original_speaker_dir = diarization_dir / seg_data.get('speaker', 'Unknown')
+                        original_audio_path = original_speaker_dir / seg_data.get('file_name', f"{seg_data['id']}.wav")
+                        
+                        if original_audio_path.exists():
+                            # Usa a voz original do jogo se for uma frase idêntica (nomes) ou ruído.
+                            # OBRIGATÓRIO: Resample para 24kHz para não quebrar a velocidade do concat.
+                            preserved_audio = AudioSegment.from_file(str(original_audio_path))
+                            preserved_audio = preserved_audio.set_frame_rate(24000).set_channels(1)
+                            preserved_audio.export(output_path, format="wav")
+                            logging.info(f"Sucesso: Áudio original copiado para '{seg_data['id']}' (24kHz).")
+                        else:
+                            # Fallback extremo só se o arquivo não existir
+                            dur_ms = int(seg_data['duration']*1000)
+                            AudioSegment.silent(duration=dur_ms).export(output_path, format="wav")
                     except Exception as copy_e:
                         logging.error(f"Erro ao copiar original para {seg_data['id']}: {copy_e}")
                     continue
@@ -2987,6 +2998,12 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                 try: 
                     language = 'pt'
                     text_to_speak = seg_data.get('manual_edit_text', '').strip() or seg_data.get('sanitized_text', '')
+                    
+                    # [v10.88] ANTI-CORTE (TRUQUE DA VÍRGULA)
+                    # O usuário notou que o Chatterbox "grita" ou corta o fôlego abruptamente quando lê 
+                    # um ponto final isolado. Trocamos tudo por vírgula para manter a fluidez natural,
+                    # mantendo reticências (...) intactas caso o usuário tenha digitado.
+                    text_to_speak = re.sub(r'(?<!\.)\.(?!\.)', ',', text_to_speak)
                     
                     # [DEBUG] Confirma o texto exato que vai para o TTS
                     logging.info(f"Gerando Chatterbox para {seg_data['id']} (Text: '{text_to_speak}')")
@@ -3300,6 +3317,10 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                         cmd.extend(['-c:a', 'libmp3lame', '-b:a', '128k', '-ar', '44100', '-ac', '1'])
                     elif output_profile.get('c:a') == 'adpcm_ms':
                         cmd.extend(['-c:a', 'adpcm_ms', '-ar', output_profile.get('ar', '22050'), '-ac', output_profile.get('ac', '1')])
+                    else:
+                        # [v10.86] FORÇA 44.1kHz UNIFORME PARA TODOS OS ÁUDIOS (WAV PADRÃO)
+                        # Isso previne que as peças _parte_001 e _parte_002 tenham Sample Rates diferentes (ex: 24hKz da IA vs 48kHz do original)
+                        cmd.extend(['-ar', '44100', '-ac', '1'])
                     
                     cmd.append(str(final_path))
                     subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -3365,16 +3386,29 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
         final_output_dir = job_dir / "_saida_final"
         segment_groups = {}
         
-        # Regex para identificar segmentos: nome_base + _seg + numero + _ + timestamp + s + ext
-        # Ex: sample_0156_seg001_3s.wav
-        seg_pattern = re.compile(r"(.+)_seg(\d{3})_(\d+)s(\..+)")
+        # Regex tripla para capturar todas as táticas de divisão de segmentos do sistema
+        # 1. Vídeos: sample_0156_seg001_3s.wav
+        # 2. Jogos (Silêncio): sample_0088_parte_004.wav
+        # 3. Jogos (Orador/Cirúrgica v10.60): sample_0088_p01.wav
+        seg_pattern_video = re.compile(r"(.+)_seg(\d{3})_(\d+)s(\..+)")
+        seg_pattern_jogos_silence = re.compile(r"(.+)_parte_(\d{3})(\..+)")
+        seg_pattern_jogos_speaker = re.compile(r"(.+)_p(\d{2})(\..+)")
         
         for file_path in final_output_dir.glob("*"):
-            match = seg_pattern.match(file_path.name)
-            if match:
-                base_name = match.group(1)
-                idx = int(match.group(2))
-                ext = match.group(4)
+            match_video = seg_pattern_video.match(file_path.name)
+            match_jogos_s = seg_pattern_jogos_silence.match(file_path.name)
+            match_jogos_p = seg_pattern_jogos_speaker.match(file_path.name)
+            
+            if match_video:
+                base_name, idx, ext = match_video.group(1), int(match_video.group(2)), match_video.group(4)
+                if base_name not in segment_groups: segment_groups[base_name] = []
+                segment_groups[base_name].append((idx, file_path, ext))
+            elif match_jogos_s:
+                base_name, idx, ext = match_jogos_s.group(1), int(match_jogos_s.group(2)), match_jogos_s.group(3)
+                if base_name not in segment_groups: segment_groups[base_name] = []
+                segment_groups[base_name].append((idx, file_path, ext))
+            elif match_jogos_p:
+                base_name, idx, ext = match_jogos_p.group(1), int(match_jogos_p.group(2)), match_jogos_p.group(3)
                 if base_name not in segment_groups: segment_groups[base_name] = []
                 segment_groups[base_name].append((idx, file_path, ext))
         
@@ -3384,36 +3418,76 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
             
             for base_name, segments in segment_groups.items():
                 if not segments: continue
-                # Ordena pelo índice (seg001, seg002...)
                 segments.sort(key=lambda x: x[0])
-                
-                output_merged_path = final_output_dir / f"{base_name}{segments[0][2]}" # Usa extensão do primeiro
+                output_merged_path = final_output_dir / f"{base_name}{segments[0][2]}"
                 list_path = final_output_dir / f"{base_name}_concat_list.txt"
                 
                 logging.info(f"Unindo {len(segments)} segmentos para criar: {output_merged_path.name}")
                 
+                # Se for apenas 1 segmento restante (ex: a parte 02 foi silenciada/apagada por erro)
+                if len(segments) == 1:
+                    logging.info(f"Reconstruindo arquivo único órfão: {segments[0][1].name}")
+                    try:
+                        shutil.copy(str(segments[0][1]), str(output_merged_path))
+                        shutil.move(str(segments[0][1]), str(segments_backup_dir / segments[0][1].name))
+                        continue
+                    except Exception as e:
+                        logging.error(f"Erro ao renomear arquivo órfão {base_name}: {e}")
+                        continue
+                
+                concat_success = False
+                # TENTATIVA 1: FFmpeg stream copy (Rápido e sem perda)
                 try:
                     with open(list_path, 'w', encoding='utf-8') as f:
                         for _, seg_path, _ in segments:
                             f.write(f"file '{seg_path.name}'\n")
                     
-                    # Concat via FFmpeg (Copy stream para ser rápido e não perder qualidade)
-                    # -safe 0 permite caminhos relativos/absolutos
                     subprocess.run([
                         'ffmpeg', '-y', '-f', 'concat', '-safe', '0', 
                         '-i', str(list_path), '-c', 'copy', str(output_merged_path)
                     ], check=True, capture_output=True)
-                    
-                    # Limpeza: Move segmentos para backup e apaga lista
-                    for _, seg_path, _ in segments:
-                        shutil.move(str(seg_path), str(segments_backup_dir / seg_path.name))
-                    os.remove(list_path)
-                    
+                    concat_success = True
                 except Exception as e:
-                    logging.error(f"Erro ao unir segmentos de {base_name}: {e}")
-
+                    logging.warning(f"FFmpeg copy falhou para {base_name}, tentando Fallback Pydub... Erro: {e}")
+                
+                # TENTATIVA 2: PyDub Concat (Robusto, recodifica mas ignora cabeçalhos corrompidos)
+                if not concat_success:
+                    try:
+                        from pydub import AudioSegment
+                        merged_audio = AudioSegment.empty()
+                        for _, seg_path, _ in segments:
+                            merged_audio += AudioSegment.from_file(str(seg_path))
+                        merged_audio.export(str(output_merged_path), format=segments[0][2].replace('.', ''))
+                        concat_success = True
+                        logging.info(f"Fallback PyDub concluiu a união de {base_name}.")
+                    except Exception as e2:
+                        logging.error(f"Erro FATAL ao unir segmentos de {base_name} no fallback: {e2}")
+                
+                # Limpeza: Move fragmentos para backup e apaga lista
+                if concat_success:
+                    import time
+                    
+                    for _, seg_path, _ in segments:
+                        if seg_path.exists():
+                            moved = False
+                            for attempt in range(5):
+                                try:
+                                    shutil.move(str(seg_path), str(segments_backup_dir / seg_path.name))
+                                    moved = True
+                                    break
+                                except Exception:
+                                    time.sleep(1) # Aguarda liberação do Antivírus/Windows
+                            
+                            if not moved:
+                                logging.warning(f"Aviso: Não foi possível mover {seg_path.name} para backup (Lock persistente do Windows).")
+                                
+                    if list_path.exists():
+                        try:
+                            os.remove(list_path)
+                        except: pass
+                        
         gerar_relatorio_final(job_dir, job_id, project_data, file_format_map)
-        cb(100, 8, f"Processo concluído! Arquivos finais em '_saida_final'.")
+        cb(100, 8, "Processo concluído! Arquivos finais em '_saida_final'.")
 
     except Exception as e:
         logging.error(f"ERRO NO PIPELINE (Job ID: {job_id}): {e}\n{traceback.format_exc()}")
@@ -3847,30 +3921,15 @@ def dublar_jogos():
             dur = get_audio_duration(audio_file)
             logging.info(f"Auditando '{audio_file.name}' ({dur:.2f}s) em busca de trocas de orador...")
             
-            # 1. Tenta Split por Orador (Diarização)
+            # 1. Tenta Split por Orador (Diarização Cirúrgica baseada em VAD)
             if dur > 1.8: # Tamanho mínimo para análise estatística
                  if split_audio_by_speaker(audio_file, job_dir):
                       continue # Já foi splitado e movido
             
-            # 2. Fallback: Split por Silêncio (se for longo)
-            if dur > 25:
-                logging.info(f"Arquivo longo sem troca de voz detectada: '{audio_file.name}'. Aplicando split por silêncio.")
-                sound = AudioSegment.from_wav(audio_file)
-                chunks = split_on_silence(sound, min_silence_len=400, silence_thresh=-40, keep_silence=200)
-                if len(chunks) > 1:
-                    segment_dir = source_dir / f"{audio_file.stem}_segmentos"
-                    segment_dir.mkdir(exist_ok=True)
-                    for i, chunk in enumerate(chunks):
-                        chunk.export(segment_dir / f"{audio_file.stem}_parte_{i+1:03d}.wav", format="wav")
-                    
-                    # Mover o original para backup após o split por silêncio
-                    backup_originals_dir = job_dir / "_0_ORIGINAIS_BACKUP"
-                    backup_originals_dir.mkdir(exist_ok=True)
-                    try:
-                        shutil.move(str(audio_file), str(backup_originals_dir / audio_file.name))
-                        logging.info(f"Arquivo longo '{audio_file.name}' separado e movido para backup.")
-                    except Exception as e:
-                        logging.warning(f"Falha ao mover original longo para backup: {e}")
+            # [v10.86 REMOVIDO] Split por Silêncio foi desativado.
+            # O corte bruto por silêncio estava cortando o final das palavras e limitando
+            # o tamanho dos espaços de dublagem da IA. Agora deixamos o Whisper gerenciar
+            # arquivos grandes de forma inteligente e segura (Micro-chunking lógico).
 
         for i in range(1, int(request.form.get('num_speakers_jogos', 1)) + 1):
             (diarization_dir / f"voz{i}").mkdir(exist_ok=True)
