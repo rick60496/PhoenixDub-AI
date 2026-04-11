@@ -1,5 +1,6 @@
 ffmpeg-python
 flask
+flask-cors
 faster-whisper
 pydub
 requests
@@ -20,7 +21,9 @@ huggingface_hub[hf_xet]
 openunmix
 transformers==4.36.2
 speechbrain>=1.0.3
-Scikit-Learn
+scikit-learn
 chatterbox
 DeepFilterNet
-llama-cpp-python
+llama-cpp-python>=0.3.20
+vpk
+fsb5
