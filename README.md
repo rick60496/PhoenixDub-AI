@@ -76,13 +76,18 @@ O nosso sistema possui um instalador interativo robusto que fará todo o trabalh
 4. Quando a mensagem verde de sucesso aparecer, seu sistema estará pronto!
 
 #### Passo 5: Abrindo a Interface PhoenixDub
-Sempre que for usar o programa no seu dia a dia, abra o Anaconda Prompt e ative a "mente" dele antes de abrir o robô:
+Sempre que for usar o programa no seu dia a dia, abra o Anaconda Prompt e ative o ambiente:
 ```bash
 conda activate C:\IA_Dublagem_Files\env
 cd C:\IA_dublagem
-python app_jogos.py
 ```
-(Ou `python App_videos.py` para filmes longos). A interface abrirá magicamente no seu navegador!
+
+Escolha o robô que deseja iniciar:
+*   **Dublagem de Jogos:** `python app_jogos.py`
+*   **Editor de Vídeo Inteligente:** `python App_videos.py`
+*   **Gerenciador de Arquivos (Mod Manager):** `python vpk_manager.py`
+
+A interface abrirá magicamente no seu navegador!
 
 ### 📁 Ferramentas de Modding (Pasta `tools`)
 Para que o **Universal Mod Manager** (vpk_manager.py) consiga extrair áudios complexos de jogos, utilizamos ferramentas externas:
@@ -174,13 +179,18 @@ Our system features a robust interactive installer that will do all the heavy li
 4. Once the green success message pops up, your system is fully built!
 
 #### Step 5: Booting PhoenixDub AI
-Every day, whenever you want to use the software, open your Anaconda Prompt, awaken the isolated virtual mind, and run it:
+Every day, whenever you want to use the software, open your Anaconda Prompt and activate the universal environment:
 ```bash
 conda activate C:\IA_Dublagem_Files\env
 cd C:\IA_dublagem
-python app_jogos.py
 ```
-(Or run `python App_videos.py` for long-form films). The web interface will magically pop up in your browser!
+
+Choose which tool you want to start:
+*   **Game Dubbing:** `python app_jogos.py`
+*   **Smart Video Editor:** `python App_videos.py`
+*   **File Manager (Mod Manager):** `python vpk_manager.py`
+
+The web interface will magically pop up in your browser!
 
 ### 📁 Modding Tools (`tools` folder)
 To enable the **Universal Mod Manager** (vpk_manager.py) to extract complex game audio, we use external utilities:
