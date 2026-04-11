@@ -10,6 +10,15 @@
 
 Nascido da necessidade de uma solução local robusta que rivalize com os gigantes da nuvem, o PhoenixDub utiliza um pipeline de IA de vários estágios para transformar vídeos e jogos em experiências naturalmente sincronizadas em Português (PT-BR).
 
+> [!WARNING]
+> **Compatibilidade & Hardware**: Este sistema foi testado exclusivamente em arquiteturas **Intel**. Devido às otimizações específicas, ele **não funcionará em processadores AMD**.
+> 
+> **Requisitos Mínimos**:
+> - Processador: Intel Core i5 (6ª Geração) ou superior.
+> - Memória: 16 GB de RAM.
+> 
+> **Performance Estimada**: Este é um pipeline de alta fidelidade e processamento intenso. Em um hardware com os requisitos mínimos, um vídeo/áudio de **50 minutos** leva em média **25 horas** para ser totalmente processado.
+
 ### 🌟 Principais Recursos
 
 *   **Smart Split (v10.0)**: Diarização avançada ao nível de palavra e divisão de segmentos para isolamento perfeito do locutor.
@@ -112,6 +121,15 @@ Você é livre para usar, modificar e distribuir este software para qualquer fin
 **PhoenixDub AI** is a professional-grade, open-source automated dubbing pipeline designed for high precision, natural flow, and extreme resilience.
 
 Born from the need for a robust local solution that rivals cloud giants, PhoenixDub uses a multi-stage AI pipeline to transform videos and games into naturally synchronized Portuguese (PT-BR) experiences.
+
+> [!WARNING]
+> **Compatibility & Hardware**: This system has been tested exclusively on **Intel** architectures. Due to specific optimizations, it **will not work on AMD processors**.
+> 
+> **Minimum Requirements**:
+> - Processor: Intel Core i5 (6th Gen) or higher.
+> - RAM: 16 GB.
+> 
+> **Estimated Performance**: This is a high-fidelity, CPU-intensive pipeline. On hardware meeting the minimum specs, a **50-minute** video/audio takes approximately **25 hours** to process.
 
 ### 🌟 Key Features
 
