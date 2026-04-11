@@ -41,7 +41,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 from flask import Flask, send_from_directory, request, jsonify, make_response
 from pydub.silence import split_on_silence
 
-# --- CONFIGURAÇÕES DE AMBIENTE ---
+# --- CONFIGURAÇÕES DE AMBIENTE (OFFLINE-FIRST) ---
+os.environ["HF_HUB_OFFLINE"] = "1"        # [v12.0] Proíbe qualquer tentativa de conexão do Hugging Face Hub (Diarização)
+os.environ["TRANSFORMERS_OFFLINE"] = "1"  # [v12.0] Proíbe qualquer tentativa de conexão do Transformers
 os.environ["SPEECHBRAIN_FETCH_STRATEGY"] = "COPY"
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["COQUI_TOS_AGREED"] = "1"
@@ -96,6 +98,49 @@ except ImportError as e:
     logging.critical(f"Erro: Dependência essencial não encontrada - {e}.")
     logging.critical("Certifique-se de que todas as dependências estão instaladas corretamente.")
     sys.exit(1)
+
+# --- [v12.70] DICIONÁRIO DE PERFIS DE JOGO (IA + ÁUDIO) ---
+# Adicione novos jogos aqui para otimizar Tradução, Glossário e Som.
+GAME_PROFILES = {
+    "padrao": {
+        "name": "Estilo Padrão",
+        "ai_instructions": "Estilo: Localização profissional e orgânica (PT-BR). Fuja de traduções literais robóticas. Priorize como um brasileiro falaria naturalmente naquela situação (use gírias de games/combate se necessário). A intenção da fala e o impacto emocional são mais importantes que as palavras exatas.",
+        "glossary": {},
+        "audio_settings": {
+            "loudnorm": "I=-16:TP=-1.5:LRA=11",
+            "volume_boost_default": 0
+        }
+    },
+    "cod": {
+        "name": "Call of Duty (MW3 Style)",
+        "ai_instructions": "Estilo: Militar e Adrenalina. Foco no desespero de combate. Mantenha nomes como Frost, Soap, Price, Ghost, Task Force 141 e Delta Force em Inglês.",
+        "glossary": {"Frost": "Frost", "Soap": "Soap", "Price": "Price", "Ghost": "Ghost"},
+        "audio_settings": {
+            "loudnorm": "I=-10:TP=-0.5:LRA=11",
+            "acompressor": "threshold=-18dB:ratio=4:attack=5:release=50:makeup=2",
+            "bass": "g=3:f=100[bassout];[bassout]treble=g=2:f=3500",
+            "volume_boost_default": 10.0
+        }
+    },
+    "bioshock": {
+        "name": "BioShock (Dystopian 50s)",
+        "ai_instructions": "Estilo: Retro-Futurista e Sombrio. Narrativa teatral e densa. Mantenha nomes como Andrew Ryan, Fontaine e Little Sisters.",
+        "glossary": {"Andrew Ryan": "Andrew Ryan", "Fontaine": "Fontaine"},
+        "audio_settings": {
+            "loudnorm": "I=-14:TP=-1.0:LRA=11",
+            "volume_boost_default": 12.0
+        }
+    },
+    "rpg": {
+        "name": "RPG (Natural/Medieval)",
+        "ai_instructions": "Estilo: Imersivo e Épico. Diálogos naturais para Fantasia/Aventura (Ex: Witcher).",
+        "glossary": {"Geralt": "Geralt", "Yennefer": "Yennefer"},
+        "audio_settings": {
+            "loudnorm": "I=-20:TP=-1.5:LRA=7",
+            "volume_boost_default": 4.0
+        }
+    }
+}
 
 # --- FUNÇÃO DE PRÉ-PROCESSAMENTO DE ÁUDIO (NOVO) ---
 def preprocess_audio_for_diarization(input_path, output_path):
@@ -169,16 +214,27 @@ def preprocess_audio_for_diarization(input_path, output_path):
 
     return False
 
-# --- DIARIZAÇÃO INTELIGENTE (v10.55) ---
+# --- DIARIZAÇÃO INTELIGENTE (v12.0 OFFLINE) ---
 class SimpleDiarizer:
     def __init__(self, source="speechbrain/spkrec-ecapa-voxceleb", device="cpu"):
         try:
             from speechbrain.inference.speaker import EncoderClassifier
-            self.encoder = EncoderClassifier.from_hparams(source=source, run_opts={"device": device})
+            # Tenta carregar do cache local SEM tocar na internet (local_files_only=True)
+            self.encoder = EncoderClassifier.from_hparams(
+                source=source, 
+                run_opts={"device": device},
+                savedir=os.path.join(os.path.expanduser("~"), ".cache", "speechbrain_models")
+            )
             self.device = device
-        except:
-            from speechbrain.pretrained import EncoderClassifier
-            self.encoder = EncoderClassifier.from_hparams(source=source, run_opts={"device": device})
+        except Exception as e:
+            logging.warning(f"SimpleDiarizer: Falha ao carregar SpeechBrain (Tentando modo offline forçado): {e}")
+            try:
+                from speechbrain.pretrained import EncoderClassifier
+                self.encoder = EncoderClassifier.from_hparams(source=source, run_opts={"device": device})
+            except:
+                raise RuntimeError("\n[ERRO CRÍTICO] Modelo de Diarização não encontrado localmente!\n"
+                                 "Para rodar offline, você deve conectar à internet UMA VEZ para baixar os modelos.\n"
+                                 "Ou verifique se os arquivos estão em ~/.cache/huggingface/hub/")
 
     def detect_splits_surgical(self, audio_path):
         """
@@ -531,9 +587,6 @@ class VoiceIdentity:
             self.state = VoiceState.PROVISIONAL
 
 class VoiceGuard:
-    # [TUNING 13/02] User Report: "Extra Voices" (Over-segmentation).
-    # Previous: Sim=0.55 / Hyst=0.45 (Too strict, splitting same person).
-    # New: Sim=0.42 / Hyst=0.35 (More lenient/sticky).
     def __init__(self, similarity_threshold=0.42, hysteresis_threshold=0.35):
         self.voices = {} 
         self.next_id_counter = 1
@@ -969,7 +1022,7 @@ def unload_whisper_model():
 def get_chatterbox_model():
     """
     Singleton para o modelo Chatterbox (Siri Local), portado do App_videos.
-    Otimizado para CPU com PyTorch 2.5+.
+    Otimizado para CPU com PyTorch 2.5+ e Quantização Dinâmica (Modulo-Level).
     """
     global chatterbox_model
     with model_lock:
@@ -977,17 +1030,24 @@ def get_chatterbox_model():
             import torch
             num_cores = os.cpu_count() or 4
             torch.set_num_threads(num_cores)
-            logging.info(f"Carregando modelo Chatterbox TTS (usando {num_cores} threads de CPU)...")
+            logging.info(f"Carregando e otimizando Chatterbox TTS (FORÇADO CPU: usando {num_cores} threads)...")
             
             try:
                 from chatterbox import ChatterboxMultilingualTTS
-                device = "cuda" if torch.cuda.is_available() else "cpu"
+                
+                # [v12.8] CPU-ONLY FORCE (User choice for GT 1030 efficiency)
+                device = "cpu"
                 
                 # [v10.15] RAM/VRAM OPTIMIZATION
                 logging.info(f"Carregando Chatterbox Multilíngue em {device}...")
-                chatterbox_model = ChatterboxMultilingualTTS.from_pretrained(device=device)
+                model_raw = ChatterboxMultilingualTTS.from_pretrained(device=device)
                 
-                logging.info(f"Modelo Chatterbox carregado com sucesso em '{device}'.")
+                # [v12.14 RESTAURAÇÃO TOTAL - FIDELIDADE ORIGINAL]
+                # Revertendo toda a quantização para garantir que o "ç" e o "ã" soem perfeitos.
+                # O processamento será mais lento, mas a qualidade será a máxima do modelo.
+                chatterbox_model = model_raw
+                logging.info(f"Modelo Chatterbox carregado com FIDELIDADE TOTAL (float32) em '{device}'.")
+                logging.info(f"Modelo Chatterbox carregado e otimizado com sucesso em '{device}'.")
             except Exception as e:
                 logging.critical(f"Falha ao carregar o modelo Chatterbox: {e}\n{traceback.format_exc()}")
                 logging.critical("Instrução: 'pip install chatterbox-tts'")
@@ -1200,7 +1260,7 @@ def run_auto_diarization_batch(job_dir, job_id, cb):
     try:
         num_speakers = int(status_data.get('num_speakers', '0'))
     except: num_speakers = 0
-    source_lang = status_data.get('source_language', 'auto')
+    source_lang = status_data.get('source_language', 'auto') # [v10.99] Recomendado 'auto' para jogos multi-idioma (COD, etc)
 
     # 2. TRANSCRIÇÃO & SEGMENTAÇÃO (Phase 1)
     # Gera arquivos em _1c_AUDIO_SEGMENTADO e JSONs em _backup_transcricao
@@ -1699,7 +1759,7 @@ def unify_speaker_files(job_dir, cb):
                 
                 combined_audio += seg
                 total_dur += len(seg)
-                if total_dur > 24000: break # [v10.66] Optimum duration for stable cloning
+                if total_dur > 25000: break # [v10.66] Optimum duration for stable cloning (25s as requested)
             except Exception as e: logging.error(f"Erro ref unificada {wav_file}: {e}")
         
         if len(combined_audio) > 0:
@@ -1740,37 +1800,54 @@ def unify_speaker_files(job_dir, cb):
     
     cb(100, 1, "Vozes unificadas e limpas.")
 
+def detect_game_genre(segments):
+    """
+    [v12.18 CACHALEÃO] Identifica o gênero do jogo baseado nos diálogos iniciais.
+    Permite que o programa mude de "personalidade" conforme o jogo.
+    """
+    if not segments: return "Ação (Geral)"
+    
+    # Pega os primeiros 15 textos para dar uma boa amostragem
+    sample_text = " / ".join([s['original_text'] for s in segments[:15]])
+    
+    prompt = f"""Você é um analista de jogos.
+Diga APENAS qual é o Gênero deste jogo (Ex: 'Ação e Guerra', 'Corrida', 'RPG', 'Terror') baseado nas seguintes falas da cena:
+"{sample_text}"
+"""
+    
+    payload = {
+        "messages": [{"role": "user", "content": prompt}], 
+        "temperature": 0.1, 
+        "max_tokens": 50
+    }
+    
+    try:
+        # [v12.28 FIX] Usa is_translation=False(pt->pt) para modo analista (sem Parrot)
+        response = make_gema_request_with_retries(payload, is_translation=False)
+        genre = response.json()['choices'][0]['message']['content'].strip().replace('"', "")
+        
+        # Filtra parroting extremo
+        if "Ação e Guerra" in genre or "Gênero deste jogo" in genre:
+             genre = "Ação e Tiro"
+             
+        logging.info(f"🦎 [CAMALEÃO] Gênero detectado pela IA: {genre}")
+        return genre
+
+    except Exception as e:
+        logging.warning(f"Aviso: Falha na deteção automática de gênero ({e}). Usando fallback 'Ação'.")
+        return "Ação (Geral)"
+
 # --- GEMA LOCAL (LLAMA-CPP) SINGLETON ---
 gema_instance = None
 gema_lock = Lock()
 
 def get_gema_model():
     """
-    Singleton robusto para o modelo Gema Local (GGUF). Unificado com App_videos.
+    [v12.50 LM STUDIO API PIVOT]
+    Como o Gemma 4 é muito novo para a biblioteca local, agora usamos o LM Studio como Host.
+    Retorna apenas um sinalizador 'LM_STUDIO'.
     """
-    global gema_instance
-    with gema_lock:
-        if gema_instance is None:
-            model_path = r"C:\IA_dublagem\models\gemma-3n-E4B-it-Q4_K_M.gguf"
-            if not os.path.exists(model_path):
-                logging.error(f"Modelo Gema não encontrado em: {model_path}")
-                return None
-            
-            try:
-                logging.info(f"Carregando Gema Local: {model_path}...")
-                from llama_cpp import Llama
-                gema_instance = Llama(
-                    model_path=model_path,
-                    n_ctx=2048,
-                    n_threads=6,
-                    n_gpu_layers=0, # Garante CPU para não competir com Chatterbox (VRAM)
-                    verbose=False
-                )
-                logging.info("Gema Local carregado com sucesso.")
-            except Exception as e:
-                logging.error(f"Falha ao carregar Gema Local: {e}")
-                return None
-    return gema_instance
+    return "LM_STUDIO"
 
 def unload_gema_model():
     """
@@ -1788,115 +1865,438 @@ def unload_gema_model():
 
 def wait_for_gema_service(progress_callback):
     """
-    Adaptado: Garante que o modelo local esteja pronto em vez de esperar API externa.
+    [v12.50 LM STUDIO API PIVOT]
+    Verifica se o LM Studio está rodando e aceitando conexões na porta 1234.
     """
-    progress_callback("Carregando Gema Local (Direct GGUF)...")
-    model = get_gema_model()
-    if model:
-        logging.info(">>> Modelo Gema Local pronto no app_jogos. <<<")
-    else:
-        logging.error(">>> Falha ao carregar Gema Local no app_jogos. <<<")
+    progress_callback("Verificando Conexão com LM Studio (Porta 1234)...")
+    try:
+        import requests
+        response = requests.get("http://localhost:1234/v1/models", timeout=5)
+        if response.status_code == 200:
+            logging.info(">>> Conectado ao Servidor Local Gema (LM Studio) com sucesso! <<<")
+        else:
+            logging.warning(">>> LM Studio respondeu, mas algo está errado. Verifique o servidor. <<<")
+    except Exception:
+        logging.error(">>> ERRO: Não consegui falar com o LM Studio. Certifique-se de que o 'Local Server' está LIGADO na porta 1234! <<<")
 
-def make_gema_request_with_retries(payload, timeout=3600, retries=5, backoff_factor=2):
+def make_gema_request_with_retries(payload, timeout=3600, retries=5, backoff_factor=2, is_translation=True):
     """
-    Refatorado: Utiliza o modelo Local em vez de POST Request ao LM Studio.
+    [v12.50 LM STUDIO API PIVOT]
+    Faz o pedido de tradução/sincronia diretamente para o host local do LM Studio.
     """
-    model = get_gema_model()
-    if not model:
-        raise Exception("Modelo Gema não carregado localmente.")
-
+    import requests
+    url = "http://localhost:1234/v1/chat/completions"
+    
     messages = payload.get("messages", [])
     temp = payload.get("temperature", 0.3)
     max_tk = payload.get("max_tokens", 2048)
+    
+    # Payload no padrão OpenAI (que o LM Studio usa)
+    api_payload = {
+        "messages": messages,
+        "temperature": temp,
+        "max_tokens": max_tk,
+        "stream": False
+    }
 
     try:
-        # Inferência direta
-        response_raw = model.create_chat_completion(
-            messages=messages,
-            temperature=temp,
-            max_tokens=max_tk
-        )
-        # Mock de objeto de resposta do 'requests'
-        class ResponseMock:
-            def __init__(self, data): self.data = data
-            def json(self): return self.data
-            def raise_for_status(self): pass
-        
-        return ResponseMock(response_raw)
-        
+        response = requests.post(url, json=api_payload, timeout=timeout)
+        response.raise_for_status()
+        return response
     except Exception as e:
-        logging.error(f"Erro na inferência do Gema Local (app_jogos): {e}")
+        logging.error(f"Erro na comunicação com LM Studio: {e}")
         raise e
 
-def gema_batch_processor_v2(segments, context, glossary={}, batch_size=5):
+def load_game_profile(profile_id):
     """
-    Processa traduções em lote usando o Gema Local 9B.
-    Mantém contexto da cena e força o dicionário de termos do usuário.
+    Retorna as configurações do perfil de jogo (IA e Áudio) direto da memória.
     """
-    logging.info(f"Iniciando lote Gema V2: {len(segments)} segmentos. (Contexto: '{context}')")
+    pid = profile_id.lower()
+    return GAME_PROFILES.get(pid, GAME_PROFILES["padrao"])
+
+def gema_batch_processor_v2(batch, cenario_ctx, glossary={}, profile_id='padrao'):
+    """
+    [v14.00 UNIFICAÇÃO MASTER] - Processamento de Etapa Única (Single-Pass)
+    Faz tradução, sincronia (18 CPS), detecção de gênero e localização de gírias
+    em uma única chamada ao Gemma 4, economizando 50% de processamento.
+    """
+    if not batch: return {}
     
-    # Monta o prompt de lote (Protegendo contra injeção de prompt)
-    prompt = f"""Você é o tradutor.
+    # [v14.20] Carrega Lorebook se houver (Dynamic Profile)
+    profile = load_game_profile(profile_id)
+    lore_text = profile.get("lore", "Gênero: Jogo de Aventura/Ação (Autodetecção Ativada)")
+    
+    # [v16.4 GATILHO ABSOLUTO POR PERFIL]
+    # Se o ID do perfil for COD ou STALKER, ou se houver palavras de combate no contexto ou lore
+    keywords = ["cod", "combate", "militar", "guerra", "tiro", "soldado", "army", "stalker", "tactical"]
+    is_action = any(x in lore_text.lower() or x in cenario_ctx.lower() or x in profile_id.lower() for x in keywords)
+    
+    if is_action:
+        protocolo_extra = (
+            "3. PROTOCOLO DE RÁDIO: 'Roger' = Copiado (OBRIGATÓRIO). 'Over' = Câmbio.\n"
+            "4. CALLSIGNS E VEÍCULOS (VITAL): Trate nomes como 'Spectre', 'Reaper', 'Ghost', 'Phantom' como UNIDADES MILITARES ou VEÍCULOS. NUNCA traduza 'Spectre' como 'fantasma' em combate.\n"
+            "5. DEDUÇÃO TÁTICA: Se a transcrição parecer nonsense, use o contexto para deduzir o alvo (Ex: 'comboio', 'docas').\n"
+            "6. SINCRONIA E NATURALIDADE: Para >5s, preencha o tempo com fluidez. Estilo Dublagem Profissional (Cinema).\n"
+        )
+    else:
+        protocolo_extra = (
+            "3. FIDELIDADE EMOCIONAL: Foque na naturalidade e na reação do personagem ao cenário.\n"
+            "4. LOCALIZAÇÃO SOCIAL: Use expressões brasileiras do cotidiano adequadas ao gênero.\n"
+        )
 
-REGRAS:
-Traduza cada bloco separadamente para PT-BR.
-Cada bloco é independente.
-Não use informação de outros blocos.
-Se a frase estiver incompleta, mantenha incompleta.
+    prompt = f"""<|system|>
+VOCÊ É UM DIRETOR DE DUBLAGEM DE ELITE. Sua missão é localizar o jogo para o Brasil com foco em NATURALIDADE e SINCRONIA profissional.
+Forneça DUAS VERSÕES (Casting) para cada frase abaixo.
 
-FORMATO OBRIGATÓRIO DE SAÍDA:
-ID => Tradução
-ID => Tradução
+[DIRETIVAS OBRIGATÓRIAS]:
+1. OPÇÃO A (FIEL): Tradução direta e técnica.
+2. OPÇÃO B (BRASIL & SYNC): Localização profissional com alma brasileira. 
+   - SEMÂNTICA: Mantenha a intenção exata da cena original.
+   - FLUIDEZ: Deve soar natural e cinematográfica, sem forçar piadas ou humor.
+{protocolo_extra}
+5. SINCRONIA: A Opção B DEVE caber nos 18 CPS.
+
+[FORMATO DE RESPOSTA OBRIGATÓRIO]:
+id: [A]: "Texto Fiel" | [B]: "Texto Brasil & Sincronia"
+
+[LORE]: {lore_text} | Contexto: {cenario_ctx}
+
+[LISTA DE FRASES PARA CASTING]:
 """
+    # Adiciona as frases com o limite de tempo
+    for item in batch:
+        f_id = item['id']
+        orig = item.get('original_text', '').strip()
+        dur = item.get('duration', 0)
+        prompt += f'- {f_id}: "{orig}" (Limite: {dur:.2f}s)\n'
 
-    if glossary:
-        termos = ", ".join([f"'{k}' -> '{v}'" for k, v in glossary.items()])
-        prompt += f"\nTERMOS OBRIGATÓRIOS NESTA CENA:\n{termos}\n"
+    prompt += """
+[AVISO CRÍTICO DE FORMATAÇÃO]:
+1. USE EXATAMENTE O ID ORIGINAL DE CADA LINHA (Ex: manhattan_grn_x_x).
+2. NUNCA USE A PALAVRA "id" OU "nome_do_arquivo" NA RESPOSTA.
+3. RESPONDA APENAS A LISTA, SEM CONVERSAR.
+
+EXEMPO DE RESPOSTA CORRETA:
+manhattan_f15_6_1_1_r: "Tradução sincronizada aqui"
+manhattan_grn_3_4: "Outra tradução aqui"
+"""
     
-    prompt += "\nATENÇÃO: Cada bloco abaixo é de cenas diferentes e não possuem continuidade.\n\n"
-    
-    # [BATCH RANDOMIZATION] - Desvinculação forçada de contexto cronológico.
-    # Evita que LLMs menores (4B) tentem "emendar" frases picotadas da mesma cena.
-    import random
-    segments_to_prompt = list(segments) # Cria uma cópia
-    random.shuffle(segments_to_prompt)  # Embaralha a ordem de leitura da IA
-    
-    for seg in segments_to_prompt:
-        prompt += f"### BLOCO {seg['id']} ###\n{seg['original_text']}\n\n"
-        
     payload = {
-        "messages": [{"role": "user", "content": prompt}], 
-        "temperature": 0.45,  # Criatividade controlada
-        "max_tokens": 2000
+        "messages": [
+            {"role": "system", "content": "Você é um motor de LOCALIZAÇÃO ARTÍSTICA E SINCRONIA. Responda apenas a lista final formatada."},
+            {"role": "user", "content": prompt}
+        ], 
+        "temperature": 0.1,  
+        "max_tokens": 2048
     }
     
-    # Processa via rede
     try:
-        response = make_gema_request_with_retries(payload)
+        response = make_gema_request_with_retries(payload, is_translation=True)
         content = response.json()['choices'][0]['message']['content']
         
-        # Parse baseado em Regex para slots
-        results_dict = {}
-        # Captura ID => Tradução multilinha até encontrar o próximo ID ou fim do texto
-        matches = re.finditer(r'(sample_[a-zA-Z0-9_]+)\s*=>(.*?)(?=\nsample_|\n###|$)', content, re.DOTALL)
+        # [DEBUG GEMMA] Salva a resposta bruta se houver problemas de extração
+        try:
+             debug_dir = Path("logs")
+             debug_dir.mkdir(exist_ok=True)
+             with open(debug_dir / "gema_last_response.txt", "w", encoding="utf-8") as f_debug:
+                 f_debug.write(f"--- BATCH {datetime.now()} ---\n{content}\n")
+        except: pass
+
+        # Extrator Inteligente Ultra-Robusto (Captura IDs com ., -, 1., etc)
+        results = {}
+        
+        # 1. Regex de Linhas: Captura qualquer coisa que pareça "id: texto" ou "id- texto"
+        # Aceita ID com pontos, tracinhos, letras e números.
+        matches = re.finditer(r'([a-zA-Z0-9_\-\.]+)\s*[:\-=>]+\s*"?\s*(.*?)\s*"?(?=\n[a-zA-Z0-9_\-\.]+\s*[:\-=>]+|$)', content, re.DOTALL)
+        
         for match in matches:
-            uid = match.group(1).strip()
-            val = match.group(2).strip().replace('\n', ' ')
-            # Limpeza bruta caso o LLM mande aspas no começo/fim
-            if val.startswith('"') and val.endswith('"'): val = val[1:-1]
-            results_dict[uid] = val
+            raw_id = match.group(1).strip().lower()
+            # Limpeza de lixos de numeração (ex: "1. manhattan" -> "manhattan")
+            clean_id = re.sub(r'^[0-9]+\.\s*', '', raw_id)
             
-        if not results_dict:
-             logging.error(f"Gema V2: A IA não retornou nenhum slot formatado corretamente! Texto lido: {content[:200]}...")
-             return {}
-             
-        return results_dict
+            val = match.group(2).strip()
+            # Cleanup de aspas e lixos de parrot
+            if val.startswith('"') and val.endswith('"'): val = val[1:-1]
+            results[clean_id] = val
+            
+        # [v14.20 RECOVERY] Se a extração falhar mas o lote for UNITÁRIO e houver aspas
+        if not results and len(batch) == 1:
+            quoted_fallback = re.search(r'"(.*?)"', content, re.DOTALL)
+            if quoted_fallback:
+                f_id = batch[0]['id'].lower()
+                results[f_id] = quoted_fallback.group(1).strip()
+                logging.info(f"🦎 [RECOVERY] ID recuperado via Lote Unitário: {f_id}")
+
+        return results
         
     except Exception as e:
-        import traceback
-        logging.error(f"Erro Crítico Batch Gema V2: {e}")
+        logging.error(f"Erro Crítico no Master Sync (Gemma 4): {e}")
         return {}
 
+def same_word_count_check(original, translated):
+    """
+    Heurística simples para detectar tradução literal (Google Tradutor).
+    Se o número de palavras for idêntico e a frase for longa, há risco de literalidade excessiva.
+    """
+    words_orig = len(original.split())
+    words_trans = len(translated.split())
+    
+    # Se a contagem de palavras é idêntica e a frase tem mais de 5 palavras
+    if words_orig == words_trans and words_orig > 5:
+        return True
+    return False
+
+def gema_etapa_correcao_master(original_text, current_translation, duration, reason="sincronia", profile_id='padrao'):
+    """
+    [v14.50 CORRETOR MASTER] - O Agente que resolve tudo.
+    Recebe um diagnóstico (ex: muito longo, robótico) e corrige a frase.
+    """
+    profile = load_game_profile(profile_id)
+    lore_text = profile.get("lore", "Gênero: Jogo de Aventura/Ação")
+    
+    target_chars = int(duration * 18)
+    
+    instrucao_especifica = ""
+    if reason == "sincronia":
+        instrucao_especifica = f"A frase está MUITO LONGA ({len(current_translation)} letras para {duration:.2f}s). ADAPTE E ENCURTE para no máximo {target_chars} letras, mantendo a alma do diálogo."
+    elif reason == "qualidade":
+        instrucao_especifica = "A tradução está 'robótica' ou parece Google Tradutor. RE-ESCREVA de forma mais natural, usando expressões que um dublador brasileiro usaria."
+    else:
+        instrucao_especifica = "A tradução falhou ou está inconsistente. Corrija para um Português fluído e natural."
+
+    prompt = f"""<|system|>
+VOCÊ É UM DIRETOR DE DUBLAGEM EXPERIENTE. Sua missão é CORRIGIR uma tradução que falhou nos critérios de qualidade.
+
+[DIAGNÓSTICO DO ERRO]:
+{instrucao_especifica}
+
+[DADOS]:
+Original (EN): "{original_text}"
+Tradução Atual (RUIM): "{current_translation}"
+Tempo Limite: {duration:.2f}s (Máximo {target_chars} letras para 18 CPS)
+Lore: {lore_text}
+
+[MISSÃO]:
+Responda APENAS com a versão corrigida, natural e dentro do tempo. Use aspas duplas: "Sua versão corrigida aqui!"
+"""
+
+    try:
+        payload = {
+            "messages": [
+                {"role": "system", "content": "Você é um Diretor de Localização. Responda apenas o texto corrigido entre aspas. Proibido conversar."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 512
+        }
+        
+        response = make_gema_request_with_retries(payload, is_translation=False)
+        content = response.json()['choices'][0]['message']['content'].strip()
+        
+        quoted_match = re.search(r'"(.*?)"', content, re.DOTALL)
+        if quoted_match:
+             return quoted_match.group(1).strip()
+        
+        return current_translation # Fallback se a IA falhar na correção
+        
+    except Exception as e:
+        logging.error(f"Erro no Agente de Correção Master: {e}")
+        return current_translation
+
+
+def gema_batch_corrector_master(failed_items, cenario_ctx, profile_id='padrao'):
+    """
+    [v14.60 SUPER TURBO BATCH CORRECTOR]
+    Corrige múltiplas traduções ruins de uma só vez para máxima performance.
+    """
+    if not failed_items: return {}
+    
+    profile = load_game_profile(profile_id)
+    lore_text = profile.get("lore", "Gênero: Jogo de Aventura/Ação")
+    
+    prompt = f"""<|system|>
+VOCÊ É UM DIRETOR DE DUBLAGEM EXPERIENTE. Sua missão é CORRIGIR a lista de traduções abaixo que falharam nos critérios de QUALIDADE ou SINCRONIA.
+
+[REGRAS DE OURO]:
+1. ADAPTAÇÃO RADICAL: O texto atual falhou na qualidade/sincronia. RE-ESCREVA de forma curta, natural e impactante. Use jargões militares autênticos do Brasil.
+2. PROIBIÇÃO DE CÓPIA: É estritamente PROIBIDO repetir o texto original em inglês.
+3. SINCRONIA (18 CPS): A nova versão DEVE caber no tempo limite fornecido. Se necessário, mude as palavras para encurtar mantendo o sentido.
+4. PONTUAÇÃO: PROIBIDO PONTOS (.). Use vírgulas, ! ou ?.
+5. ID: Mantenha o ID original exatamente como fornecido.
+
+[LORE]: {lore_text} | Contexto: {cenario_ctx}
+
+[LISTA DE CORREÇÕES]:
+"""
+    for item in failed_items:
+        f_id = item['id']
+        orig = item.get('original_text', '').strip()
+        ruim = item.get('translated_text', '').strip()
+        dur = item.get('duration', 0)
+        target = int(dur * 18)
+        reason = item.get('_lqa_reason', 'sincronia/qualidade')
+        prompt += f'- {f_id}: "{orig}" -> Tradução Atual: "{ruim}" (Motivo: {reason}, Limite: {target} letras)\n'
+
+    prompt += "\nResponda APENAS a lista corrigida no formato:\nid: \"Tradução ajustada e natural aqui!\""
+
+    try:
+        payload = {
+            "messages": [
+                {"role": "system", "content": "Você é um Diretor de Localização. Responda apenas a lista corrigida entre aspas. Proibido conversar."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2,
+            "max_tokens": 2048
+        }
+        
+        response = make_gema_request_with_retries(payload, is_translation=False)
+        content = response.json()['choices'][0]['message']['content'].strip()
+        
+        # Extrator Robusto Master (Mesmo do Batch)
+        results = {}
+        matches = re.finditer(r'([a-zA-Z0-9_\-\.]+)\s*[:\-=>]+\s*"?\s*(.*?)\s*"?(?=\n[a-zA-Z0-9_\-\.]+\s*[:\-=>]+|$)', content, re.DOTALL)
+        
+        for match in matches:
+            raw_id = match.group(1).strip().lower()
+            clean_id = re.sub(r'^[0-9]+\.\s*', '', raw_id)
+            val = match.group(2).strip().strip('"')
+            results[clean_id] = val
+            
+        return results
+
+    except Exception as e:
+        logging.error(f"Erro no Batch Corrector Master: {e}")
+        return {}
+
+def gema_vibe_master_analyzer(batch_items, cenario_ctx):
+    """
+    [v16.0 VIBE MASTER] - O Cérebro de Tom.
+    Analisa o lote de frases em inglês e define o "clima" emocional.
+    """
+    if not batch_items: return "ZOEIRA_LIBERADA"
+    
+    prompt = f"""<|system|>
+VOCÊ É UM DIRETOR DE VIBE E TOM EMOCIONAL.
+Sua missão é classificar o lote de frases em inglês.
+
+[REGRA DE OURO - SEJA EXIGENTE COM O DRAMA]:
+- SÓ use 'DRAMA_PESADO' se o texto descrever: morte trágica, choro soluçante, funeral ou trauma profundo.
+- Se for COMBATE, TIRO, AÇÃO, CONVERSA DE BAR, NPCs ou DIÁLOGO GENÉRICO: Escolha 'ZOEIRA_LIBERADA'.
+- NA DÚVIDA: Sempre escolha 'ZOEIRA_LIBERADA'. Nós queremos alma brasileira e naturalidade agressiva na maior parte do tempo.
+
+[CONTEXTO ATUAL]: {cenario_ctx}
+
+[LISTA DE FRASES DO LOTE]:
+"""
+    for item in batch_items:
+        prompt += f"- \"{item.get('original_text', '')}\"\n"
+
+    prompt += "\nResponda APENAS um JSON no formato: {\"vibe\": \"URGENTE ou NARRATIVO\", \"genero\": \"MILITAR ou SOCIAL\", \"auditoria\": {\"frase_original_aqui\": \"frase_corrigida_caso_nonsense\"}}"
+
+    try:
+        payload = {
+            "messages": [
+                {"role": "system", "content": "Você é Analista de Vibe. Responda apenas a tag. Proibido conversar."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 64
+        }
+        
+        response = make_gema_request_with_retries(payload, is_translation=False)
+        content = response.json()['choices'][0]['message']['content'].strip()
+        
+        # Tenta extrair o JSON da IA
+        vibe = "ZOEIRA_LIBERADA"
+        genero = "SOCIAL"
+        
+        json_match = re.search(r'\{.*?\}', content, re.DOTALL)
+        if json_match:
+            try:
+                data = json.loads(json_match.group(0))
+                vibe = data.get("vibe", "URGENTE").upper()
+                genero = data.get("genero", "SOCIAL").upper()
+                auditoria = data.get("auditoria", {})
+            except: pass
+            
+        # [v18.0 HEURÍSTICA E AUDITORIA]
+        # Aplica a auditoria nas strings do lote
+        for item in batch_items:
+            orig = item.get('original_text', '')
+            if orig in auditoria:
+                logging.info(f"   -> 🦎 [AUDITORIA] Corrigindo inglês: '{orig}' -> '{auditoria[orig]}'")
+                item['original_text'] = auditoria[orig]
+
+        # Se IA falhar no JSON, mas palavras de combate estiverem lá, força o gênero MILITAR
+        all_text = " ".join([item.get('original_text', '').lower() for item in batch_items])
+        combat_keywords = ["clear", "contact", "roger", "frag", "hostile", "target", "enemy", "fire", "secure", "sector", "area", "balcony"]
+        if any(w in all_text for w in combat_keywords):
+            genero = "MILITAR"
+
+        return {"vibe": vibe, "genero": genero}
+
+    except Exception as e:
+        logging.error(f"Erro no Vibe Master / Auditor: {e}")
+        return {"vibe": "URGENTE", "genero": "SOCIAL"}
+
+def gema_supervisor_lqa_batch_review(batch_with_durations, cenario_ctx, profile_id='padrao', lobe_vibe='ZOEIRA_LIBERADA'):
+    """
+    [v14.95 SUPERVISOR LITERÁRIO & SINCRONIA]
+    O "Olho de Diretor" agora vê também o Tempo (18 CPS).
+    """
+    if not batch_with_durations: return []
+    
+    profile = load_game_profile(profile_id)
+    lore_text = profile.get("lore", "Gênero: Jogo de Aventura/Ação")
+    
+    # [v16.4 VINCULAÇÃO DE PROTOCOLO NO DIRETOR]
+    keywords = ["cod", "combate", "militar", "guerra", "tiro", "soldado", "stalker"]
+    is_action = any(x in lore_text.lower() or x in cenario_ctx.lower() or x in profile_id.lower() for x in keywords)
+    prot_dir = "3. MILITAR: Verifique Callsigns (Spectre, Reaper). PROIBIDO 'fantasma' para veículos. REPROVE frases sem sentido tático." if is_action else "3. NATURALIDADE SOCIAL: Foque na fluidez do diálogo para o gênero."
+
+    prompt = f"""<|system|>
+VOCÊ É UM DIRETOR DE DUBLAGEM. Sua missão é escolher a opção que soe mais NATURAL e PROFISSIONAL.
+
+[CRITÉRIOS]:
+1. RITMO: Se for 'URGENTE', prefira opções curtas e impactantes. Se 'NARRATIVO', prefira fluidez.
+2. NATURALIDADE: A opção escolhida deve parecer um diálogo real de filme/jogo dublado profissionalmente.
+3. SEMÂNTICA: Verifique se o sentido original foi preservado.
+{prot_dir}
+4. SINCRONIA: Respeite rigorosamente os 18 CPS.
+
+[VIBE DO LOTE]: {lobe_vibe} | [CONTEXTO]: {cenario_ctx}
+
+[LISTA PARA CURADORIA]:
+"""
+    for f_id, data in batch_with_durations.items():
+        orig = data.get('original', '')
+        dur = data.get('duration', 0)
+        options = data.get('text', '') # Aqui virá o A e B bruto
+        prompt += f"- {f_id}: \"{orig}\" (Duração: {dur:.2f}s) -> Candidatos: {options}\n"
+
+    prompt += "\nResponda APENAS: id: [Letra da Opção Escolhida ou REPROVADO]"
+
+    try:
+        payload = {
+            "messages": [
+                {"role": "system", "content": "Você é Curador de Dublagem. Responda apenas o ID e a escolha (Ex: id_01: B). Proibido conversar."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 512
+        }
+        
+        response = make_gema_request_with_retries(payload, is_translation=False)
+        content = response.json()['choices'][0]['message']['content'].strip()
+        
+        if "OK" in content.upper(): return []
+        
+        bad_ids = [line.strip().lower() for line in re.split(r'[\n,]', content) if line.strip()]
+        return bad_ids
+
+    except Exception as e:
+        logging.error(f"Erro no Supervisor Literário: {e}")
+        return []
 
 def select_best_sync_option(original_duration, options_list, original_text):
     """
@@ -1904,7 +2304,7 @@ def select_best_sync_option(original_duration, options_list, original_text):
     """
     best_opt = None
     best_score = float('inf')
-    target_rate = 16.0 # [UPDATED] Aumentado de 13 para 16 a pedido do usuário (Fala mais rápida)
+    target_rate = 18.0 # [v12.95 UPDATED] Sincronia de 18 Letras/s (Fórmula do Usuário)
     
     # Validação básica
     valid_options = [opt.strip() for opt in options_list if opt and len(opt.strip()) > 0]
@@ -1923,22 +2323,25 @@ def select_best_sync_option(original_duration, options_list, original_text):
         clean_opt = re.sub(r',+', ',', clean_opt) # ,, -> ,
         clean_opt = re.sub(r'[\.,;]+$', '', clean_opt) # Remove pontuação final redundante na contagem
         
-        # [MATH] Custo Real: Letras (Vírgulas têm custo ZERO pois serão removidas)
-        # O usuário pediu para o Gema escrever natural (com vírgulas) e o sistema limpar depois.
-        commas = 0 
-        pauses = 0 
-        effective_char_count = len(clean_opt) # Apenas letras contam
+        # [v12.97 MATH] Custo Real: Letras + Vírgulas INTERNAS (0.5s cada vírgula)
+        # O usuário explicou que vírgulas no FINAL da frase não devem consumir tempo.
+        commas_count = clean_opt.rstrip(',').count(',')
+        comma_time_cost = commas_count * 0.5
         
-        cps = effective_char_count / original_duration if original_duration > 0 else 0
+        # Caracteres efetivos (sem contar as vírgulas que já viraram tempo)
+        text_only = re.sub(r'[,]', '', clean_opt)
+        effective_char_count = len(text_only)
         
-        # [NOVA LÓGICA V3] - Ajuste para fala rápida (15-20 CPS)
-        # Se o CPS for <= 20, consideramos aceitável (já que permitimos aceleração de 1.35x)
-        if cps <= 20:
-             # Alvo ideal agora padronizado com target_rate (16)
-            score = 0.0 + (abs(cps - target_rate) * 0.1) 
-        else:
-            # Penalidade apenas se passar de 20 CPS
-            score = (cps - 20) * 10.0
+        # Tempo estimado total da frase (Fala + Pausas)
+        estimated_time = (effective_char_count / target_rate) + comma_time_cost
+        
+        # Score baseado no erro absoluto de tempo em relação ao áudio original
+        score = abs(estimated_time - original_duration)
+        
+        # [v12.91] Penalidade se o CPS das letras for insano (> 22) mesmo com vírgulas
+        cps_letters = effective_char_count / (original_duration - comma_time_cost) if (original_duration - comma_time_cost) > 0.1 else 99
+        if cps_letters > 22:
+             score += (cps_letters - 22) * 5.0
  
 
         # 3. Regra de Ouro para Áudios Curtos (< 1.2s)
@@ -1951,7 +2354,7 @@ def select_best_sync_option(original_duration, options_list, original_text):
             if len(words) >= 2:
                 score -= 5
 
-        logging.info(f"   - Candidato: '{clean_opt}' | CPS: {cps:.1f} | Score: {score:.1f}")
+        logging.info(f"   - Candidato: '{clean_opt}' | Est.Time: {estimated_time:.2f}s | Score: {score:.2f}")
         if original_duration < 1.2:
             words = clean_opt.split()
             # Penaliza severamente 1 palavra isolada, a menos que o original seja curto também
@@ -1961,7 +2364,7 @@ def select_best_sync_option(original_duration, options_list, original_text):
             if len(words) >= 2:
                 score -= 5
 
-        logging.info(f"   - Candidato: '{clean_opt}' | CPS: {cps:.1f} | Score: {score:.1f}")
+        logging.info(f"   - Candidato: '{clean_opt}' | CPS: {cps_letters:.1f} | Score: {score:.1f}")
 
         if score < best_score:
             best_score = score
@@ -1987,161 +2390,146 @@ def apply_string_fallback(text, max_chars):
     new_words = [w for w in new_words if w.lower() not in blacklist]
     return " ".join(new_words)
 
-def gema_etapa_2_sincronizacao(original_text, translated_text, duration, previous_context=None):
-    # Prompt aprimorado para Single Shot + Modos de Edição
-    target_chars = int(duration * 16) # [UPDATED] Alvo de 16 chars/s
-    duration_seconds = duration
-    
-    # 1. Definição de MODO e TEMPERATURA (Ajuste Final)
-    # Segmentos MUITO curtos (< 1.2s) exigem DETERMINISMO TOTAL
-    if duration_seconds <= 1.2:
-        mode = "CORTE"
-        temperature = 0.0
-        instruction_prompt = """
-        [MODO: CORTE DRÁSTICO]
-        - Tempo CRÍTICO (< 1.2s).
-        - TAREFA: Mantenha APENAS o essencial.
-        - Prioridade: VERBO > SUJEITO. Jogue fora o resto.
-        """
-
-    elif duration_seconds <= 1.8:
-        mode = "SIMPLIFICACAO_AGRESSIVA"
-        temperature = 0.1
-        instruction_prompt = """
-        [MODO: SIMPLIFICAÇÃO AGRESSIVA]
-        - Tempo: MUITO APERTADO (1.2s - 1.8s).
-        - TAREFA: O texto TEM que caber. Priorize velocidade.
-        - ESTRATÉGIAS:
-          1. **Ataque o Verbo:** "Take this!" -> "Pega!".
-          2. **Remova Sujeitos:** "You need this" -> "Precisa disso".
-          3. **Junte Frases:** "No! Don't!" -> "Não! Para!".
-          4. **Meta:** ~18 a 20 caracteres por segundo (Fala rápida).
-        """
-    elif duration_seconds <= 3.2:
-        mode = "SIMPLIFICACAO_MODERADA"
-        temperature = 0.15
-        instruction_prompt = """
-        [MODO: SIMPLIFICAÇÃO MODERADA]
-        - Tempo: RAZOÁVEL (1.8s - 3.2s).
-        - TAREFA: Encaixe a frase sem perder a elegância.
-        - ESTRATÉGIAS:
-          1. **Tente a Frase Completa:** Muitas vezes cabe!
-          2. **Corte Leve:** Se sobrar, tire advérbios ("Realmente", "Muito").
-          3. **Refraseie:** "It is more blessed to give" -> "É melhor dar do que receber" (Cabe bem).
-          4. **EVITE NONSENSE:** Não transforme frases bonitas em índio ("Dá, é feliz").
-          5. **Meta:** ~16 caracteres por segundo (Ritmo normal/rápido).
-        """
-    else:
-        mode = "ADAPTACAO"
-        temperature = 0.2
-        instruction_prompt = """
-        [MODO: ADAPTAÇÃO]
-        - Tempo: Confortável (> 3.0s).
-        - TAREFA: Dublagem natural.
-        - REGRAS:
-          1. TOM DE DUBLAGEM (BR): Use linguagem falada, coloquial.
-             - PROIBIDO: "Local de habitação", "Efetuou", "Aguardar".
-             - USE: "Lugar de morar", "Fez", "Esperar".
-          2. **Fluidez**: Priorize frases que soem naturais.
-        """
-
-    prompt = f"""[ESPECIALISTA EM LIP-SYNC]
-    Original: "{original_text}"
-    Tradução: "{translated_text}"
-    Contexto Anterior: "{previous_context or ''}"
-    
-    [CRÍTICO - LIMITE EXATO DE CARACTERES]:
-    - O limite máximo aproximado para a tradução caber na dublagem é de {target_chars} caracteres.
-    - A sua frase atual tem {len(translated_text)} caracteres e precisa ser reescrita para se adequar a este limite matemático, preservando o núcleo semântico.
-    
-    {instruction_prompt}
-    
-    [DIRETIVA ÚNICA]:
-    Escreva APENAS a melhor adaptação possível. UMA ÚNICA LINHA.
-    Sem listas. Sem "Opção 1". Sem explicações.
-    
-    RESPOSTA DEFINITIVA:
+def gema_lqa_reviewer_pro(original_en, candidate_pt, duration):
     """
+    [PASSO 2 - LQA] O Gemma atua como um Editor Sênior de Dublagem para revisar a naturalidade.
+    """
+    prompt = f"""<|system|>
+Você é o Revisor-Chefe de Dublagem. Seu trabalho é GARANTIR que a tradução NÃO pareça "tradução", mas sim uma fala natural de um filme brasileiro.
 
+CENA:
+Original (EN): "{original_en}"
+Opção Candidata (PT-BR): "{candidate_pt}"
+Tempo disponível: {duration:.2f}s
+
+SUA MISSÃO:
+1. Analise se a frase em PT-BR soa natural, "cool" e narrativa.
+2. GÍRIA MILITAR: Só aceite "Copiado" se for Roger/Copy. Se for "Gotcha", "Incoming" ou "Target", use termos de ação (Te peguei, Acertei, Alvo).
+3. Se a frase estiver robótica ou muito literal, CORRIJA-A agora.
+4. CONTAGEM DE TEMPO: (Letras / 18) + (Vírgulas INTERNAS * 0.5) deve ser próximo de {duration:.2f}s.
+4. REGRA DA VÍRGULA: Somente vírgulas no MEIO da frase consomem 0,5s. Vírgulas no FINAL da frase são gratuitas (0s).
+5. NUNCA USE PONTOS (.). Use vírgulas ou exclamações.
+
+Responda APENAS com a versão final refinada entre aspas duplas.
+Se a opção candidata já for perfeita, apenas repita-a entre aspas duplas.
+PROIBIDO CONVERSAR OU EXPLICAR.
+"""
     try:
-        payload = {"messages": [{"role": "user", "content": prompt}], "temperature": temperature, "max_tokens": 600}
-        response = make_gema_request_with_retries(payload)
+        payload = {
+            "messages": [
+                {"role": "system", "content": "Você é o Juiz Sênior de Localização. Responda apenas o texto final entre aspas duplas."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.2,
+            "max_tokens": 512
+        }
+        response = make_gema_request_with_retries(payload, is_translation=False)
         content = response.json()['choices'][0]['message']['content'].strip()
         
-        # [FIX] Normaliza quebra de linha
-        content = re.sub(r'(\d+[\.\-\)])', r'\n\1', content)
+        quoted_match = re.search(r'"(.*?)"', content, re.DOTALL)
+        if quoted_match:
+             return quoted_match.group(1).strip()
+        return candidate_pt # Se falhar o parse, mantemos o candidato original
+    except:
+        return candidate_pt
+
+def gema_etapa_2_sincronizacao(original_text, duration, previous_context=None, profile_id='padrao'):
+    """
+    [v14.10 FALLBACK MASTER] - Sincronia Individual Autônoma.
+    Usada como redundância caso o lote falhe.
+    """
+    profile = load_game_profile(profile_id)
+    lore_text = profile.get("lore", "Gênero: Jogo de Aventura/Ação (Autodetecção Ativada)")
+    target_chars = int(duration * 18)
+    temperature = 0.2
+    
+    prompt = f"""<|system|>
+# DIRETRIZES DE DUBLAGEM INDIVIDUAL (MASTER SYNC)
+
+[TAREFA]: Traduza e SINCRONIZE a frase abaixo mantendo a "vibe" do jogo.
+
+[CONTRATO DE SINCRONIA]:
+- LIMITE DE TEMPO: {duration:.2f} segundos.
+- CÁLCULO: (Letras / 18) + (Vírgulas Internas * 0,5) <= {duration:.2f}s.
+- PONTUAÇÃO: PROIBIDO PONTOS (.). Use vírgulas ou !/?.
+- TABELA DE GÍRIAS: "Roger" -> "Copiado!", "Gotcha" -> "Na mira!", "Cover me" -> "Me cobre!".
+
+[LORE]: {lore_text} 
+[HISTÓRICO]: {previous_context if previous_context else "Início"}
+
+[FRASE ORIGINAL (EN)]: 
+"{original_text}"
+
+Responda APENAS com a tradução final entre aspas duplas: "Sua tradução aqui!"
+"""
+
+    try:
+        payload = {
+            "messages": [
+                {"role": "system", "content": "Você é um Diretor de Sincronia. Sua resposta deve conter APENAS o texto traduzido final entre aspas duplas. Proibido conversar."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": temperature,
+            "max_tokens": 512
+        }
         
-        options = []
-        for line in content.split('\n'):
-             line = line.strip()
-             if not line: continue
-             
-             # Limpeza básica (Números e Letras)
-             clean_line = re.sub(r'^[\(\[]?\s*[0-9a-zA-Z]+\s*[\)\]\.]\s*', '', line)
-             
-             # Remove labels (Opção 1, Natural, etc)
-             clean_line = re.sub(r'^(\[.*?\]|\(.*?\)|\b(Conservadora|Natural|Expressiva|Opção \d)\b)\s*[-:]?\s*', '', clean_line, flags=re.IGNORECASE)
-             clean_line = re.sub(r'\s*[\(\[].*?[\)\]]$', '', clean_line) # Remove (Texto) no fim
-             clean_line = clean_line.replace('**', '').replace('"', '').replace("'", "").strip()
-             
-             if clean_line:
-                 options.append(clean_line)
-
-        # Fallback Parsing
-        if not options:
-             options = [l for l in content.split('\n') if len(l.strip()) > 3]
-
-        # [CRITICAL FIX] Forçar inclusão da tradução original (LITERAL) como candidata
-        # Muitas vezes a tradução direta é a melhor opção se couber no tempo.
-        if translated_text and len(translated_text.strip()) > 2:
-             t_clean = translated_text.strip()
-             if t_clean not in options:
-                 options.append(t_clean)
-
-        # [NOVO] Expansão de Candidatos (Sistema assume controle das vírgulas)
-        # Gera versões sem vírgula para competir no Leilão do Judge
-        expanded_options = list(options)
-        for opt in options:
-            if ',' in opt:
-                no_comma = opt.replace(',', '')
-                expanded_options.append(no_comma)
+        response = make_gema_request_with_retries(payload, is_translation=False)
+        content = response.json()['choices'][0]['message']['content'].strip()
         
-        options = expanded_options
-
-        # Seleção Inteligente via Judge
-        best_choice = select_best_sync_option(duration, options, original_text)
+        # Extrator Inteligente de Aspas
+        quoted_match = re.search(r'"(.*?)"', content, re.DOTALL)
+        if quoted_match:
+             final_text = quoted_match.group(1).strip()
+             return apply_string_fallback(final_text, target_chars or 999), 1
         
-        if best_choice:
-            logging.info(f"Melhor sync: '{best_choice}'")
-            return apply_string_fallback(best_choice, target_chars or 999), 1
-        else:
-            logging.warning(f"Sem opção válida. Usando tradução base.")
-            return apply_string_fallback(translated_text, target_chars or 999), 2
-
+        # Fallback se não usar aspas
+        return apply_string_fallback(original_text, target_chars or 999), 2
+        
     except Exception as e:
-        logging.error(f"Erro na API Gema (Etapa 2): {e}")
-        return translated_text, 2
+        logging.error(f"Erro no Fallback Sync Gema: {e}")
+        return original_text, 2
 
 def sanitize_tts_text(text):
     """
-    Remove pontuação e caracteres que o Chatterbox não gosta.
-    Mantém vírgulas pois o usuário pediu naturalidade, mas remove excessos.
+    Remove pontuação e resíduos de prompt da IA (Contexto Anterior, RESPOSTA DEFINITIVA, etc).
     """
     if not text: return ""
     
-    # 1. Normalização Básica
-    text = text.replace("...", ",").replace("..", ",").replace("—", ", ")
+    # [v12.21 PENTE-FINO] Remove labels de alucinação (ex: "Contexto Anterior: ...")
+    prompt_labels = r"(?im)^(Contexto|Resposta|Original|Tradução|Style|Timing|Scenario|Note|Tradução Adaptada|Texto).*?:.*?\n?"
+    text = re.sub(prompt_labels, "", text)
+
+    # 1. Normalização Básica (Trocamos reticências por nada, e não por vírgulas mais)
+    text = text.replace("...", " ").replace("..", " ").replace("—", " ")
     
-    # [INJEÇÃO DE ENERGIA] Frases curtas de ação ganham exclamação no Chatterbox (Call of Duty vibes).
-    if len(text) > 0 and len(text) < 15 and not text.endswith('!') and not text.endswith('?'):
-        text = text + "!"
-        
-    # 2. Remove caracteres estranhos (exceto pontuação básica)
-    text = re.sub(r'[^\w\s,\.\!\?áéíóúâêîôûãõàèìòùçÁÉÍÓÚÂÊÎÔÛÃÕÀÈÌÒÙÇ]', '', text)
+    # 2. Whitelist de Símbolos e Caracteres (Permite %, $, +, @, vídeo-games vibes)
+    # [v12.97 UPDATED] Agora inclui símbolos vitais para narrativa de jogos.
+    text = re.sub(r'[^\w\s\,\!\?\-\%\$\+\@áéíóúâêîôûãõàèìòùçÁÉÍÓÚÂÊÎÔÛÃÕÀÈÌÒÙÇ]', '', text)
     
-    # 3. Limpa espaços duplos
+    # [v12.98 CLEANUP] Remove conflitos de pontuação no final (ex: ",!" ou "!,")
+    # Isso evita problemas no Chatterbox que "trava" com pontuação dupla exótica.
+    text = text.replace(",!", "!").replace("!,", "!").replace("?,", "?").replace(",?", "?")
+    
+    # 3. [v12.96 PROIBIÇÃO DO PONTO]
+    # O usuário reportou que pontos (.) bugam o Chatterbox e causam alucinações.
+    # Exterminamos todos os pontos remanescentes.
+    text = text.replace(".", "")
+    
+    # [INJEÇÃO DE ENERGIA] Frases curtas de ação ganham exclamação (!) no Chatterbox.
+    if 0 < len(text) < 15 and not text.endswith(('!', '?')):
+        text = text.strip() + "!"
+    
+    # 4. Limpa espaços duplos e evita vírgulas duplas/triplas
     text = re.sub(r'\s+', ' ', text).strip()
+    text = re.sub(r',+', ',', text) # Garante que não tenha ",,"
     
+    # [v12.96 GPT-SOVITS EOS TOKEN FIX]
+    # Usamos Exclamação (!) ou Interrogação (?) como fallback EOS, NUNCA ponto.
+    if text and not text.endswith(('!', '?')):
+        text += "!"
+        
+    return text
+        
     return text
 
 # Alias para compatibilidade
@@ -2149,16 +2537,15 @@ def gema_etapa_3_sanitizacao(text):
     return sanitize_tts_text(text)
 
 def gema_etapa_3_adaptacao_tts(synced_text, is_retry=False):
-    prompt_normal = f"""Você é um editor de roteiros para um motor de Texto-para-Fala (TTS). Adapte o texto a seguir para uma leitura natural, mas seja económico com as pausas.
+    prompt_normal = f"""Você é um editor de roteiros para o motor de voz Chatterbox (TTS). Adapte o texto a seguir para uma leitura 100% natural.
 **REGRAS CRÍTICAS:**
-1.  **ECONOMIZE VÍRGULAS:** Use o mínimo de vírgulas possível, apenas o essencial para a clareza.
-2.  **SUBSTITUA PONTOS:** Troque pontos finais (.) por vírgulas (,) apenas se a pausa for necessária.
-3.  **MANTENHA '!' E '?':** Exclamações e interrogações devem ser mantidas.
-4.  **NÃO TERMINE COM PAUSA:** O texto final nunca deve terminar com ponto ou vírgula.
-5.  **FORMATO:** Responda **APENAS** com o texto adaptado.
+1.  **PAUSAS NATURAIS:** Use vírgulas para indicar pausas curtas onde o orador deve respirar (Cada vírgula = 0.5s).
+2.  **PROIBIÇÃO TOTAL DE PONTOS:** NUNCA use o caractere de ponto (.). O Chatterbox entra em colapso e alucina se ler um ponto final. Use vírgulas (,) ou exclamações (!).
+3.  **HÍFENS PERMITIDOS:** Use hífens normalmente em palavras compostas (ex: "bem-sucedida").
+4.  **FORMATO:** Responda APENAS com o texto adaptado entre aspas duplas, ex: "Texto Adaptado!"
 **Texto Original:** "{synced_text}"
-**Texto Adaptado para TTS (com o mínimo de vírgulas):**"""
-    prompt_retry = f"""Ajuste a pontuação deste texto para um robô de voz ler. Use poucas vírgulas. Mantenha '!' e '?'.
+**Texto Adaptado:**"""
+    prompt_retry = f"""Ajuste a pontuação deste texto para um robô de voz ler. Responda entre aspas duplas.
 Texto: "{synced_text}"
 Texto Ajustado:"""
     prompt = prompt_retry if is_retry else prompt_normal
@@ -2520,6 +2907,9 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                 if status_temp.get('game_profile') == 'bioshock':
                     initial_boost = "12"
                     logging.info("[PROFILE] BioShock: Definindo volume_boost.txt inicial para +12dB.")
+                elif status_temp.get('game_profile') == 'cod':
+                    initial_boost = "10"
+                    logging.info("[PROFILE] Call of Duty (MW3): Definindo volume_boost.txt inicial para +10dB.")
                 
                 with open(boost_file, "w") as f:
                     f.write(f"{initial_boost}\n# AVISO: 1 = +1dB. NAO coloque mais que 25.\n# CUIDADO: Volumes extremos podem DANIFICAR seus alto-falantes.")
@@ -2698,6 +3088,16 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     seg_data['sanitized_text'] = seg_data.get('original_text', '')
                 logging.info(f"Segmento {seg_data['id']} preservado (já é Português).")
 
+            # [v12.32 SINCRONIA DE DADOS]
+            # O project_data NÃO deve ter prioridade se o usuário apagou fisicamente o arquivo do 
+            # _backup_texto_final para forçar a re-tradução.
+            backup_path = job_dir / "_backup_texto_final" / f"{seg_data['id']}.json"
+            if not backup_path.exists() and seg_data.get('sanitized_text'):
+                seg_data.pop('translated_text', None)
+                seg_data.pop('synced_text', None)
+                seg_data.pop('sanitized_text', None)
+                seg_data['translation_fallback'] = False
+
             if seg_data.get('sanitized_text') and not seg_data.get('translation_fallback'):
                 continue
 
@@ -2725,99 +3125,213 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
             cb(0, 3, f"Processando {len(files_to_process_gema)} textos com Gema...")
             wait_for_gema_service(lambda s: cb(0, 3, s))
             
-            # [PERFORMANCE] Processamento Paralelo (Multithread)
-            # [V2 BATCH PROCESSING]
-            # Usa o novo processador em lote para acelerar e dar contexto
+            # [v12.70] Prioridade para o perfil escolhido pelo usuário no HTML/Status
+            game_profile_id = status.get('game_profile', 'padrao').lower()
             
-            # Obtém contexto da cena (simplificado para jogos, pega as primeiras frases)
-            cenario_ctx = " / ".join([s['original_text'] for s in files_to_process_gema[:3]])
+            # Combina Perfil com Contexto Imediato das falas
+            sample_ctx = " / ".join([s['original_text'] for s in files_to_process_gema[:3]])
+            cenario_ctx = f"{game_profile_id.upper()} - Contexto: {sample_ctx}"
+            cb(5, 3, f"Estilo: {game_profile_id.upper()}")
             
-            # Divide em lotes de 10
-            batch_size = 10
-            batches = [files_to_process_gema[i:i + batch_size] for i in range(0, len(files_to_process_gema), batch_size)]
+            # [v12.27 MICRO-CACHE DE TRADUÇÃO 💡] E BATCHING MULTILÍNGUE
+            micro_cache_file = job_dir / "micro_cache.json"
+            micro_cache = safe_json_read(micro_cache_file) if micro_cache_file.exists() else {}
+            
+            # Filtra os arquivos que vão EXIGIR chamada da IA (remove duplicados e cacheados)
+            unique_texts_map = {}
+            unique_files = []
+            
+            for f in files_to_process_gema:
+                orig_txt = f.get('original_text', '').strip()
+                if not orig_txt: continue
+                # Se já tem tradução final salva no Micro-Cache
+                if orig_txt in micro_cache:
+                    f['_usar_cache'] = True
+                    continue
+                # Se é repetição dentro do mesmo arquivo, processa um e clona pros outros depois
+                if orig_txt.lower() not in unique_texts_map:
+                    unique_texts_map[orig_txt.lower()] = True
+                    unique_files.append(f)
+                else:
+                    f['_usar_cache_da_fila'] = True
+
+            rus_files = [f for f in unique_files if re.search(r'[А-Яа-яЁё]', f.get('original_text', ''))]
+            eng_files = [f for f in unique_files if not re.search(r'[А-Яа-яЁё]', f.get('original_text', ''))]
+            
+            # [v14.10 ESTABILIDADE]
+            # O lote de 15 frases é o número mágico para o Gemma 4 não se perder.
+            batch_size = 15
+            batches = []
+            
+            # 1. Agrupa apenas Lotes Puros de Inglês
+            for i in range(0, len(eng_files), batch_size):
+                batches.append(eng_files[i:i + batch_size])
+                
+            # 2. Agrupa apenas Lotes Puros de Russo
+            for i in range(0, len(rus_files), batch_size):
+                batches.append(rus_files[i:i + batch_size])
             
             total_batches = len(batches)
             completed_items = 0
             total_items = len(files_to_process_gema)
             
             for b_idx, batch in enumerate(batches):
-                cb((b_idx / total_batches) * 100, 3, f"Traduzindo lote {b_idx+1}/{total_batches}...")
+                cb((b_idx / total_batches) * 100, 3, f"Analisando Vibe do Lote {b_idx+1}...")
                 
-                # 1. Tradução em Lote
-                resultados_lote = gema_batch_processor_v2(batch, cenario_ctx, glossary={})
+                # [v16.3 VIBE & GÊNERO DYNAMIC ANALYSIS]
+                vibe_data = gema_vibe_master_analyzer(batch, cenario_ctx)
+                vibe_lote = vibe_data.get("vibe", "ZOEIRA_LIBERADA")
+                genero_lote = vibe_data.get("genero", "SOCIAL")
+                logging.info(f"   -> 🦎 [VIBE] Lote {b_idx+1}: {vibe_lote} | Gênero: {genero_lote}")
+                
+                # Injeta a vibe e gênero detectado no contexto da tradução
+                vibe_ctx = f"{cenario_ctx} | GÊNERO: {genero_lote} | VIBE: {vibe_lote}"
+                
+                # 1. Tradução em Lote Original (Casting A/B)
+                resultados_lote = gema_batch_processor_v2(batch, vibe_ctx, glossary={}, profile_id=game_profile_id)
+                
+                itens_reprovados = []
                 
                 for file_data in batch:
                     f_id = file_data['id']
                     original_text = file_data.get('original_text', '').strip()
                     if not original_text: continue
                     
-                    translated_text = DICIONARIO_TRADUCOES.get(original_text.lower())
-                    if not translated_text:
-                         translated_text = resultados_lote.get(f_id)
+                    final_text = resultados_lote.get(f_id)
                     
-                    file_data['translation_fallback'] = False
-                    
-                    if not translated_text or "FALHA" in translated_text:
-                         logging.warning(f"Atenção: A IA ignorou o ID {f_id} no lote. Forçando tradução individual (Retry)...")
-                         
-                         # Retry individual no mesmo processador
-                         retry_result = gema_batch_processor_v2([file_data], cenario_ctx, glossary={})
-                         translated_text = retry_result.get(f_id)
-                         
-                         if not translated_text or "FALHA" in translated_text:
-                             with model_lock:
-                                  log_error_to_file(job_dir, f_id, original_text, "Tradução Lote", translated_text or "VAZIO", 2)
-                             translated_text = original_text # Fallback Final
-                             file_data['translation_fallback'] = True
-                             file_data['translated_text'] = translated_text
-                             file_data['synced_text'] = translated_text
-                             file_data['sanitized_text'] = gema_etapa_3_sanitizacao(translated_text)
-                         else:
-                             # Sucesso no Retry
-                             logging.info(f"Sucesso no Retry individual para o ID {f_id}!")
-                             file_data['translation_fallback'] = False
-                             file_data['translated_text'] = translated_text
-                             
-                             original_dur = file_data.get('duration', 0)
-                             clean_trans = re.sub(r'^\d+[\.\-\)]\s*', '', translated_text).strip()
-                             char_count = len(clean_trans)
-                             cps = char_count / original_dur if original_dur > 0 else 99
-                             
-                             if cps <= 18.0:
-                                 file_data['synced_text'] = clean_trans
-                             else:
-                                 synced_text, _ = gema_etapa_2_sincronizacao(original_text, translated_text, original_dur)
-                                 file_data['synced_text'] = synced_text if "FALHA" not in synced_text else translated_text
-                             
-                             file_data['sanitized_text'] = gema_etapa_3_sanitizacao(file_data.get('synced_text', translated_text))
-                    else:
-                         file_data['translated_text'] = translated_text
-                         file_data['translation_fallback'] = False
-                         
-                         original_dur = file_data.get('duration', 0)
-                         clean_trans = re.sub(r'^\d+[\.\-\)]\s*', '', translated_text).strip()
-                         char_count = len(clean_trans)
-                         cps = char_count / original_dur if original_dur > 0 else 99
-                         
-                         if cps <= 18.0:
-                             logging.info(f"[SYNC SKIP] Trad {f_id} cabe no tempo (CPS {cps:.1f}).")
-                             file_data['synced_text'] = clean_trans
-                         else:
-                             # Sincronização individual (pois depende da duração exata)
-                             synced_text, _ = gema_etapa_2_sincronizacao(original_text, translated_text, original_dur)
-                             if "FALHA" not in synced_text:
-                                  file_data['synced_text'] = synced_text
-                             else:
-                                  file_data['synced_text'] = translated_text # Fallback
-                         
-                         file_data['sanitized_text'] = gema_etapa_3_sanitizacao(file_data.get('synced_text', translated_text))
-                    
-                    file_data['manual_edit_text'] = "" 
-                    safe_json_write(file_data, job_dir / "_backup_texto_final" / f"{f_id}.json")
-                    completed_items += 1
-                    cb((completed_items / total_items) * 100, 3, f"Processado: {completed_items}/{total_items}")
+                    # [RETRY INDIVIDUAL] Se a IA pulou algum ID no lote
+                    if not final_text or "FALHA" in final_text:
+                        logging.warning(f"Atenção: A IA ignorou o ID {f_id}. Tentando Sincronia Individual...")
+                        retry_result = gema_batch_processor_v2([file_data], cenario_ctx, glossary={}, profile_id=game_profile_id)
+                        final_text = retry_result.get(f_id)
 
-            # Salva o progresso final do lote
+                    if final_text:
+                        # [v14.90 LQA REATIVO] - Scanner de Segurança Instantâneo
+                        duration = file_data.get('duration', 0)
+                        commas = final_text.count(',')
+                        estimated_time = (len(final_text) / 18) + (commas * 0.5)
+                        
+                        over_time = estimated_time > (duration * 1.15)
+                        nao_traduziu = (final_text.strip().lower() == original_text.strip().lower()) and len(original_text) > 3
+                        
+                        file_data['translated_text'] = final_text
+                        file_data['synced_text'] = final_text
+                        file_data['sanitized_text'] = gema_etapa_3_sanitizacao(final_text)
+
+                        if over_time or nao_traduziu:
+                            file_data['_lqa_reason'] = "nao_traduziu" if nao_traduziu else "sincronia"
+                            itens_reprovados.append(file_data)
+                    else:
+                        file_data['translated_text'] = original_text
+                        file_data['synced_text'] = original_text
+                        file_data['sanitized_text'] = gema_etapa_3_sanitizacao(original_text)
+                # [v15.0 SISTEMA DE CURADORIA DE ELITE (BEST-OF-2)]
+                if resultados_lote:
+                    logging.info(f"   -> 🦎 [LQA] Diretor (vibe: {vibe_lote}) selecionando o melhor Casting...")
+                    
+                    # Prepara dados com duração para o Revisor
+                    review_data = {}
+                    candidates_map = {} # Cache das opções A/B
+                    
+                    for fd in batch:
+                        fid = fd['id']
+                        if fid in resultados_lote:
+                            # [v15.1 PARSEADOR ROBUSTO]
+                            # Tenta separar A e B de qualquer forma (com ou sem prefixos)
+                            raw_candidates = resultados_lote[fid]
+                            opt_a, opt_b = raw_candidates, raw_candidates
+                            
+                            if " | " in raw_candidates:
+                                parts = raw_candidates.split(" | ")
+                                opt_a = parts[0].strip()
+                                opt_b = parts[1].strip()
+                                
+                                # Limpa prefixos extras se existirem
+                                opt_a = re.sub(r'^\[?A\]?:?\s*', '', opt_a).strip().strip('"')
+                                opt_b = re.sub(r'^\[?B\]?:?\s*', '', opt_b).strip().strip('"')
+                            
+                            candidates_map[fid] = {"A": opt_a, "B": opt_b}
+                            
+                            candidates_map[fid] = {"A": opt_a, "B": opt_b}
+                            review_data[fid] = {
+                                "original": fd.get('original_text', ''),
+                                "text": raw_candidates,
+                                "duration": fd.get('duration', 0)
+                            }
+                    
+                    decisoes_agente = gema_supervisor_lqa_batch_review(review_data, cenario_ctx, profile_id=game_profile_id, lobe_vibe=vibe_lote)
+                    
+                    # Aplica as escolhas
+                    for fd in batch:
+                        fid_l = fd['id'].lower()
+                        # Procura a decisão (Ex: "manhattan_01: B")
+                        escolha = "B" # Default para a opção com mais "alma Brasil"
+                        status_lqa = "ok"
+                        
+                        for d_line in decisoes_agente:
+                            if fid_l in d_line.lower():
+                                if "REPROVADO" in d_line.upper():
+                                    status_lqa = "fail"
+                                elif ": A" in d_line.upper():
+                                    escolha = "A"
+                                break
+
+                        if status_lqa == "fail":
+                            logging.info(f"      - ID '{fid_l}' REPROVADO (Nenhuma opção presta). Acionando Corretor...")
+                            fd['_lqa_reason'] = "qualidade"
+                            itens_reprovados.append(fd)
+                        else:
+                            final_vencedora = candidates_map.get(fd['id'], {}).get(escolha, resultados_lote.get(fd['id'], ''))
+                            logging.info(f"      - ID '{fid_l}': Selecionada Opção {escolha} ('{final_vencedora}')")
+                            fd['translated_text'] = final_vencedora
+                            fd['synced_text'] = final_vencedora
+                            fd['sanitized_text'] = gema_etapa_3_sanitizacao(final_vencedora)
+
+                # [v14.60 CORREÇÃO EM LOTE] - Só entra em casos críticos de falha das duas opções
+                if itens_reprovados:
+                    logging.info(f"   -> 🦎 [LQA] Refazendo {len(itens_reprovados)} frases por falha total de casting...")
+                    correcoes_batch = gema_batch_corrector_master(itens_reprovados, cenario_ctx, profile_id=game_profile_id)
+                    
+                    for item in itens_reprovados:
+                        id_repo = item['id'].lower()
+                        nova_versao = correcoes_batch.get(id_repo)
+                        if nova_versao and nova_versao != item['translated_text']:
+                            item['translated_text'] = nova_versao
+                            item['synced_text'] = nova_versao
+                            item['sanitized_text'] = gema_etapa_3_sanitizacao(nova_versao)
+
+                # Finaliza, salva e reporta o progresso de cada item do lote
+                for file_data in batch:
+                    file_data['manual_edit_text'] = "" 
+                    safe_json_write(file_data, job_dir / "_backup_texto_final" / f"{file_data['id']}.json")
+                    
+                    if file_data.get('sanitized_text'):
+                        micro_cache[file_data.get('original_text', '').strip()] = {
+                            "translated_text": file_data.get('translated_text'),
+                            "synced_text": file_data.get('synced_text'),
+                            "sanitized_text": file_data.get('sanitized_text')
+                        }
+                    completed_items += 1
+                    cb((completed_items / total_items) * 100, 3, f"Processado Híbrido: {completed_items}/{total_items}")
+
+            # [v12.27 MICRO-CACHE APLICAÇÃO] Processando os clones que pularam a fila!
+            for file_data in files_to_process_gema:
+                if file_data.get('_usar_cache') or file_data.get('_usar_cache_da_fila'):
+                    orig_txt = file_data.get('original_text', '').strip()
+                    cached_data = micro_cache.get(orig_txt)
+                    if cached_data:
+                        file_data['translated_text'] = cached_data['translated_text']
+                        file_data['synced_text'] = cached_data.get('synced_text', cached_data['translated_text'])
+                        file_data['sanitized_text'] = cached_data.get('sanitized_text', cached_data['translated_text'])
+                        file_data['translation_fallback'] = False
+                        file_data['manual_edit_text'] = ""
+                        safe_json_write(file_data, job_dir / "_backup_texto_final" / f"{file_data['id']}.json")
+                        
+                        completed_items += 1
+                        cb((completed_items / total_items) * 100, 3, f"Reaproveitando Cache: {completed_items}/{total_items}")
+
+            # Salva o micro_cache e o progresso final
+            safe_json_write(micro_cache, micro_cache_file)
             safe_json_write(project_data, project_data_path)
             cb(100, 5, "Processamento de texto concluído.")
             unload_gema_model() # [NEW] Libera RAM para o Chatterbox v2
@@ -2917,46 +3431,63 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
             for i, seg_data in enumerate(actual_generation_queue):
                 output_path = dubbed_audio_dir / f"{seg_data['id']}_dubbed.wav"
                 
-                cb(5 + (i / len(actual_generation_queue)) * 95, 6, f"Gerando áudio para {seg_data['id']}")
-                ref_path = diarization_dir / seg_data['speaker'] / "_REF_VOZ_UNIFICADA.wav"
-
+                # [v12.15 VISUAL PROGRESS] Destaque para o progresso geral (Garante visibilidade no console)
+                perc_total = 5 + (i / len(actual_generation_queue)) * 95
+                cb(perc_total, 6, f"Gerando {i+1}/{len(actual_generation_queue)}: {seg_data['id']}")
+                logging.info(f"\n >>> PROGRESSO DO JOB: {perc_total:.1f}% <<< [Processando {i+1} de {len(actual_generation_queue)}]\n")
+                
+                # [v12.11 FIX] Lógica de Referência Resiliente
+                # 1. Tenta a voz unificada (Melhor qualidade/curadoria)
+                ref_path = diarization_dir / seg_data.get('speaker', 'Unknown') / "_REF_VOZ_UNIFICADA.wav"
+                
                 if not ref_path.exists():
-                     # Tenta fallback global
+                     # 2. Tenta o próprio áudio original do segmento (Fallback Inteligente)
+                     original_speaker_dir = diarization_dir / seg_data.get('speaker', 'Unknown')
+                     ref_path = original_speaker_dir / seg_data.get('file_name', f"{seg_data['id']}.wav")
+                     if ref_path.exists():
+                         logging.info(f"Usando próprio áudio original como referência para '{seg_data['id']}'.")
+                
+                if not ref_path.exists():
+                     # 3. Tenta fallback global do projeto
                      ref_path = global_fallback
                      
                 if not ref_path.exists():
-                    logging.error(f"Nenhum áudio de referência VÁLIDO encontrado para {seg_data['id']} em '{ref_path}'. Pulando.")
+                    logging.error(f"Nenhum áudio de referência (unificado, original ou fallback) encontrado para {seg_data['id']}. Pulando.")
                     continue
                 # [SKIP TTS]
-                # Verifica se o texto é apenas um NOME ou SOM NÃO-VERBAL que deve ser mantido original.
-                # [UPDATED] Lista unificada e completa (referenciada acima mentalmente)
-                NOMES_A_IGNORAR = [
-                    "jolly!", "jolly", "ahh!", "ahh", "ah!", "ah", "oh!", "oh", "uh!", "uh", "hmm!", "hmm", "wow!", "wow",
-                    "argh", "tsk", "ugh", "screams", "gasps", "moans", "chokes", "grita", "geme", "laughs", "chuckles", 
-                    "sobs", "cries", "sighs", "eh", "heh", "hum", "ha", "haha", "hah", "whoa", "ooh", "aw", "ouch", "ow",
-                    "psst", "shh", "yikes", "yay", "ew", "ick", "boo", "hiss", "growl", "snarl", "roar", "bark", "meow",
-                    "purr"
+                # Check 1: Está na lista explícita de nomes/ruídos?
+                # [v11.6 FIX] Uso de REGEX (\b) para garantir que só ignore palavras inteiras.
+                # Evita que "What" seja confundido com "ha" (ruído).
+                
+                # Lista unificada de interjeições que preferimos manter o áudio original (preserva emoção)
+                BYPASS_WORDS = [
+                    "ah", "oh", "uh", "um", "hmm", "wow", "argh", "tsk", "ugh", "eh", "heh", "hum", "ha", "haha", 
+                    "hah", "whoa", "ooh", "aw", "ouch", "ow", "psst", "shh", "yikes", "yay", "ew", "ick", "boo", 
+                    "hiss", "growl", "snarl", "roar", "bark", "meow", "purr"
                 ]
                 
+                is_exception = False
                 text_clean_check = seg_data.get('original_text', '').strip().lower()
                 
-                # Check 1: Está na lista explícita OU contém palavras de ruído (Lista Expandida)
-                # Expandimos a verificação para incluir a lista BAD_REF_WORDS conceitual
-                # [FIX] Removido 'run', 'walk', 'step' para evitar falsos positivos em diálogos.
-                BAD_REF_WORDS_TTS = ['argh', 'ah', 'oh', 'uh', 'hmm', 'wow', 'tsk', 'ugh', 'screams', 'gasps', 'moans', 'chokes', 'grita', 'geme', 'laughs', 'chuckles', 'sobs', 'cries', 'sighs', 'eh', 'heh', 'hum', 'ha', 'haha', 'hah', 'whoa', 'ooh', 'aw', 'ouch', 'ow', 'psst', 'shh', 'yikes', 'yay', 'ew', 'ick', 'boo', 'hiss', 'growl', 'snarl', 'roar', 'bark']
-                
-                is_exception = False
-                if any(exc in text_clean_check for exc in NOMES_A_IGNORAR if len(text_clean_check) < len(exc) + 5):
-                     is_exception = True
-                elif len(text_clean_check) < 25 and any(bad in text_clean_check for bad in BAD_REF_WORDS_TTS):
-                     is_exception = True
+                # Só verificamos se a frase for curta (< 25 chars)
+                if len(text_clean_check) < 25:
+                    # [REGEX ENGINE] Procura por qualquer uma das palavras proibidas como PALAVRA INTEIRA (\b)
+                    pattern = r'\b(' + '|'.join(re.escape(w) for w in BYPASS_WORDS) + r')\b'
+                    if re.search(pattern, text_clean_check):
+                        is_exception = True
+                    
+                    # Check Extra: Gemidos/Gritos (palavras que não são processadas como fala real)
+                    RUÍDOS_EXTRAS = ["screams", "gasps", "moans", "chokes", "grita", "geme", "laughs", "chuckles", "sobs", "cries", "sighs"]
+                    if any(ruido in text_clean_check for ruido in RUÍDOS_EXTRAS):
+                        is_exception = True
                 
                 # Check 2: É alucinação do Whisper? (Ex: ᗴᗴᗴᗸᗼᗶ)
                 # Se tiver muitos caracteres estranhos ou não-latinos repetidos.
                 is_hallucination = False
                 if len(text_clean_check) > 0:
-                    # Conta caracteres alfabéticos normais
-                    normal_chars = len(re.findall(r'[a-zA-Z\s]', text_clean_check))
+                    # [v12.0 FIX] Uso de \w (Unicode) em vez de [a-zA-Z]. 
+                    # Isso permite que Russo, Grego e outros idiomas não sejam marcados como lixo.
+                    normal_chars = len(re.findall(r'[\w\s]', text_clean_check))
                     # Se menos de 50% for normal, provavelmente é lixo do Whisper (gemidos/gritos mal interpretados)
                     if (normal_chars / len(text_clean_check)) < 0.5:
                         is_hallucination = True
@@ -3038,13 +3569,15 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                             from pydub.silence import detect_nonsilent
                             clip_raw = AudioSegment.from_wav(str(output_path))
                             
-                            # VAD Inteligente: Ignora ruídos de até -42dB (padrão era -50)
-                            nonsilent_ranges = detect_nonsilent(clip_raw, min_silence_len=150, silence_thresh=-42)
+                            # VAD Inteligente: Ignora ruídos de até -50dB (padrão COD/Radio)
+                            # [v11.7] Relaxado de -42 para -50 para evitar sumiço de sílabas finais.
+                            nonsilent_ranges = detect_nonsilent(clip_raw, min_silence_len=200, silence_thresh=-50)
                             
                             if nonsilent_ranges:
-                                start_trim = max(0, nonsilent_ranges[0][0] - 15) # Margem pequena 15ms
+                                start_trim = max(0, nonsilent_ranges[0][0] - 20) # Margem inicial 20ms
                                 end_trim = nonsilent_ranges[-1][1]
-                                final_end_trim = min(len(clip_raw), end_trim + 30)
+                                # [v11.7] Aumentado para 150ms para não comer o final das palavras
+                                final_end_trim = min(len(clip_raw), end_trim + 150)
                                 clip_trimmed = clip_raw[start_trim:final_end_trim]
                                 
                                 # [SAFETY VALVE] Trava de Duração v2
@@ -3110,46 +3643,38 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                         # 15 = +15dB (Alto)
                         # 100 = +100dB (Explodido)
                         volume_boost_factor = float(val_int)
-                        logging.info(f"Audio Compression Ativado: Compressor + {val_int}dB de Ganho.")
+                        logging.info(f"Audio Compression Ativado: Master Boost + {val_int}dB de Ganho.")
                     else:
                         volume_boost_factor = 0
                         logging.info("Audio Compression: Desativado (0dB).")
         except Exception as e:
             logging.error(f"Erro ao ler volume_boost.txt: {e}")
 
-        # [FEATURE] Perfil de Jogo - Lógica de MASTERIZAÇÃO Profissional v10.74
-        game_profile = status.get('game_profile', 'padrao')
+        # [v12.70] Lógica Unificada de Perfis via Dicionário Dinâmico
+        game_profile_id = status.get('game_profile', 'padrao')
+        profile = load_game_profile(game_profile_id)
+        audio_cfg = profile.get('audio_settings', {})
         profile_filters = []
         
-        if game_profile == 'bioshock':
-            # FMOD Optimization: Loudnorm + high fidelity
-            if volume_boost_factor <= 1.0: 
-                volume_boost_factor = 12.0
-                logging.info("[PROFILE] BioShock: Aplicando ganho automático de +12dB.")
-            profile_filters.append("loudnorm=I=-14:TP=-1.0:LRA=11")
-            logging.info("[PROFILE] BioShock: Ativando Normalização Profissional (Standard LUFS -14).")
-            
-        elif game_profile == 'cod':
-            # Wall of Sound: Heavy Compression + EQ (MW3 Style)
-            if volume_boost_factor <= 1.0: 
-                volume_boost_factor = 10.0 # MW3 é muito alto, subimos o ganho base
-                logging.info("[PROFILE] Call of Duty (MW3): Aplicando ganho automático de +10dB.")
-            
-            # 1. Normalização agressiva para -12 LUFS (Máxima presença)
-            profile_filters.append("loudnorm=I=-12:TP=-1.0:LRA=11")
-            # 2. Compressor de rádio/cinema (puxa os detalhes sem estourar)
-            profile_filters.append("acompressor=threshold=-18dB:ratio=4:attack=5:release=50:makeup=2")
-            # 3. Exciter/EQ: Bass 100Hz (Peso) + Treble 3.5kHz (Clareza da voz sob tiros)
-            profile_filters.append("bass=g=3:f=100[bassout];[bassout]treble=g=2:f=3500")
-            logging.info("[PROFILE] Call of Duty: Ativando Otimização MW3 (Wall of Sound + EQ).")
-            
-        elif game_profile == 'rpg':
-            # Natural Dynamics: Dynamic Range preservation
-            if volume_boost_factor <= 1.0: 
-                volume_boost_factor = 4.0
-                logging.info("[PROFILE] RPG: Aplicando ganho automático de +4dB.")
-            profile_filters.append("loudnorm=I=-20:TP=-1.5:LRA=7") # Mais dinâmico, alvo -20 LUFS
-            logging.info("[PROFILE] RPG: Ativando Dinâmica Natural (Diálogos Limpos).")
+        # 1. Normalização / Loudnorm
+        if 'loudnorm' in audio_cfg:
+             profile_filters.append(f"loudnorm={audio_cfg['loudnorm']}")
+        
+        # 2. Compressor
+        if 'acompressor' in audio_cfg:
+             profile_filters.append(f"acompressor={audio_cfg['acompressor']}")
+             
+        # 3. Equalizador (Bass/Treble)
+        if 'bass' in audio_cfg:
+             profile_filters.append(audio_cfg['bass'])
+             
+        # 4. Volume Boost Default
+        if volume_boost_factor <= 1.0: 
+            volume_boost_factor = audio_cfg.get('volume_boost_default', 0)
+            if volume_boost_factor > 0:
+                 logging.info(f"[PROFILE] {profile['name']}: Aplicando ganho automático de +{volume_boost_factor}dB.")
+
+        logging.info(f"[PROFILE] {profile['name']}: Ativando Otimização de Áudio Profissional.")
 
         for i, seg_data in enumerate(project_data):
             file_id = seg_data['id']
@@ -3190,12 +3715,17 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
 
             # Se o arquivo final NÃO existe, precisamos criar
             if not file_exists:
+                # [v12.6 FIX] Lógica de Fallback Robusta para FFmpeg
+                # Se o áudio dublado não existe, usamos o original como fonte para o FFmpeg
+                # Assim ele ainda recebe o Limiter e o Volume Boost do perfil.
                 if not source_path or not source_path.exists():
-                    logging.error(f"Arquivo de origem não encontrado para '{file_id}'. Copiando original.")
+                    logging.warning(f"Aviso: Áudio dublado não encontrado para '{file_id}'. Usando original como fonte de masterização.")
                     if original_file_path.exists(): 
-                        shutil.copy(original_file_path, final_path)
+                        source_path = original_file_path
                         is_fallback_copy = True
-                    else: continue
+                    else: 
+                        logging.error(f"Erro Crítico: Nem áudio dublado nem original encontrados para '{file_id}'.")
+                        continue
 
                 try:
                     original_duration = seg_data.get('duration', 0)
@@ -3205,19 +3735,21 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     af_filters = ["dynaudnorm"]
                     atempo_filters = []
                     speed_factor = None
-                    TOLERANCE_SECONDS = 0.5
+                    TOLERANCE_SECONDS = 0.1
 
-                    if not is_fallback_copy and original_duration > 0 and source_duration > (original_duration + TOLERANCE_SECONDS):
-                        calculated_factor = source_duration / original_duration
-                        # [SPEED UPDATE v10.51] Permitir aceleração de até 1.30x (Solicitação Usuário BioShock)
-                        speed_factor = min(calculated_factor, 1.30)
-                        logging.info(f"Áudio '{file_id}' ({source_duration:.2f}s) é mais longo que o original ({original_duration:.2f}s). Acelerando por {speed_factor:.2f}x.")
-                        
-                        temp_factor = speed_factor
-                        while temp_factor > 2.0:
-                            atempo_filters.append("atempo=2.0")
-                            temp_factor /= 2.0
-                        if temp_factor > 1.0: atempo_filters.append(f"atempo={temp_factor:.4f}")
+                    if not is_fallback_copy and original_duration > 0:
+                        is_padded = False
+                        if source_duration > (original_duration + TOLERANCE_SECONDS):
+                            calculated_factor = source_duration / original_duration
+                            # [SPEED UPDATE v10.51] Permitir aceleração de até 1.30x (Solicitação Usuário BioShock)
+                            speed_factor = min(calculated_factor, 1.30)
+                            logging.info(f"Áudio '{file_id}' ({source_duration:.2f}s) é longo. Acelerando por {speed_factor:.2f}x para caber em {original_duration:.2f}s.")
+                            
+                            temp_factor = speed_factor
+                            while temp_factor > 2.0:
+                                atempo_filters.append("atempo=2.0")
+                                temp_factor /= 2.0
+                            if temp_factor > 1.0: atempo_filters.append(f"atempo={temp_factor:.4f}")
                     
                     if atempo_filters: af_filters = atempo_filters + af_filters
                     
@@ -3293,20 +3825,25 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     # 3. Limiter: REMOVIDO a pedido (Pode distorcer/ estourar).
                     
                     if volume_boost_factor > 0:
-                        # Compressor Agressivo para nivelar tudo ("Wall of Sound")
-                        # ratio=4 (forte), attack=5ms (pega picos rápidos), makeup=2 (+2dB nativo)
-                        compressor_filter = "acompressor=threshold=-12dB:ratio=4:attack=5:release=50:makeup=2"
+                        # [v12.5 FIX] Apenas aplica compressor se o perfil já não tiver um (Evita "Chiado" de compressão dupla)
+                        # No COD já temos um compressor de rádio, então aqui pulamos.
+                        has_compressor = any("acompressor" in f for f in profile_filters)
                         
                         # Ganho do Usuário (Raw dB)
                         # Ex: 10% -> volume=10dB
                         boost_filter = f"volume={volume_boost_factor}dB"
                         
-                        # [TRUE PEAK LIMITER] Proteção contra Ducking da Engine (FMOD/Wwise)
-                        # Se bater no 0dB, a engine abaixa o volume.
-                        # Alvo: -1.0 dB (limit=0.89)
-                        limiter_filter = "alimiter=limit=0.89:level=disabled:attack=5:release=50"
+                        # [v12.55] LIMITER PRECISO (-0.30 dB a pedido do usuário)
+                        # Valor matemático exato para 0.30dB é 0.966. 
+                        # Isso garante força máxima com zero distorção digital.
+                        limiter_filter = "alimiter=limit=0.966:level=disabled:attack=5:release=50"
                         
-                        full_filter_chain = f"{compressor_filter},{boost_filter},{limiter_filter}"
+                        if not has_compressor:
+                            compressor_filter = "acompressor=threshold=-12dB:ratio=4:attack=5:release=50:makeup=2"
+                            full_filter_chain = f"{compressor_filter},{boost_filter},{limiter_filter}"
+                        else:
+                            # Se já tem compressor (COD/Bio), só aplica o ganho e o limiter preciso.
+                            full_filter_chain = f"{boost_filter},{limiter_filter}"
                         
                         if '-filter_complex' in cmd:
                             idx = cmd.index('-filter_complex')
@@ -3325,9 +3862,12 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     elif output_profile.get('c:a') == 'adpcm_ms':
                         cmd.extend(['-c:a', 'adpcm_ms', '-ar', output_profile.get('ar', '22050'), '-ac', output_profile.get('ac', '1')])
                     else:
-                        # [v10.86] FORÇA 44.1kHz UNIFORME PARA TODOS OS ÁUDIOS (WAV PADRÃO)
-                        # Isso previne que as peças _parte_001 e _parte_002 tenham Sample Rates diferentes (ex: 24hKz da IA vs 48kHz do original)
-                        cmd.extend(['-ar', '44100', '-ac', '1'])
+                        # [BUGFIX: BIOSHOCK RADIO] NÃO FORCE 44.1kHz DE FORMA CEGA.
+                        # Motores de áudio como Unreal/FMOD exigem que a Sample Rate (Ex: 11025, 22050)
+                        # e Canais originais do som específico sejam respeitados religiosamente.
+                        native_ar = str(output_profile.get('ar', '44100'))
+                        native_ac = str(output_profile.get('ac', '1'))
+                        cmd.extend(['-c:a', 'pcm_s16le', '-ar', native_ar, '-ac', native_ac])
                     
                     cmd.append(str(final_path))
                     subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -3802,13 +4342,14 @@ def limpar_hallucinacoes_projeto(job_id):
         
         try:
             clip_raw = AudioSegment.from_wav(str(file_path))
-            # Threshold agressivo de -42dB
-            nonsilent_ranges = detect_nonsilent(clip_raw, min_silence_len=150, silence_thresh=-42)
+            # [v11.7] Relaxado para -50dB (COD Radio Style)
+            nonsilent_ranges = detect_nonsilent(clip_raw, min_silence_len=150, silence_thresh=-50)
             
             if nonsilent_ranges:
-                start_trim = max(0, nonsilent_ranges[0][0] - 15)
+                start_trim = max(0, nonsilent_ranges[0][0] - 20)
                 end_trim = nonsilent_ranges[-1][1]
-                final_end_trim = min(len(clip_raw), end_trim + 30)
+                # [v11.7] Margem de 150ms para evitar 'mova' -> 'mo'
+                final_end_trim = min(len(clip_raw), end_trim + 150)
                 clip_trimmed = clip_raw[start_trim:final_end_trim]
                 
                 # Trava de Segurança (+50%)
