@@ -52,12 +52,15 @@ O nosso sistema baixa as inteligências e vozes de alta qualidade direto do Hugg
 5. Quando ele pedir o token ("Token:"), cole o código que você copiou (Dica: no CMD/Prompt, ao clicar com o botão direito para colar, o código ficará "invisível" na tela por segurança. É normal. Apenas aperte Enter). 
 6. Quando perguntar sobre *Add token as git credential (Y/n)*, aperte `n` e depois Enter. Pronto! Seu PC tem a chave do hangar.
 
-#### Passo 3: O Cérebro de Tradução (Gema)
-A nossa inteligência artificial de tradução roda 100% offline. Para funcionar, você precisa do 'cérebro' do modelo:
-1. Acesse a página correspondente no HuggingFace e faça o download deste arquivo exato: `gemma-3n-E4B-it-Q4_K_M` (Formato GGUF).
-2. Vá até a pasta raiz do seu projeto PhoenixDub (onde ficam os arquivos de código).
-3. Crie uma nova pasta chamada exatamente `models`.
-4. Mova o arquivo `gemma-3n-E4B-it-Q4_K_M` para dentro da pasta `models`.
+#### Passo 3: O Cérebro de Tradução (Gema 4 via LM Studio)
+A inteligência artificial de tradução e sincronia (Gema 4) agora roda via **LM Studio** para maior performance e facilidade de uso:
+1. Baixe e instale o **LM Studio** em: [https://lmstudio.ai/](https://lmstudio.ai/)
+2. Abra o LM Studio e, na barra de pesquisa, procure por: `unsloth/gemma-4-E4B-it-GGUF`.
+3. Escolha o arquivo que termina em `Q4_K_M.gguf` (ou superior) e clique em **Download**.
+4. Após baixar, vá no ícone de **Local Server** (lado esquerdo, ícone de <->).
+5. Selecione o modelo carrgado no topo da tela.
+6. Clique em **Start Server** e certifique-se de que a porta está configurada como `1234`.
+7. **Importante:** Mantenha o LM Studio aberto com o servidor ligado enquanto utiliza o PhoenixDub!
 
 #### Passo 4: Instalação Automática (Setup)
 O nosso sistema possui um instalador interativo robusto que fará todo o trabalho pesado para você (Criar a arquitetura com Python 3.10, baixar softwares externos como FFmpeg, e instalar as Inteligências Artificiais via PIP):
@@ -80,6 +83,11 @@ cd C:\IA_dublagem
 python app_jogos.py
 ```
 (Ou `python App_videos.py` para filmes longos). A interface abrirá magicamente no seu navegador!
+
+### 📁 Ferramentas de Modding (Pasta `tools`)
+Para que o **Universal Mod Manager** (vpk_manager.py) consiga extrair áudios complexos de jogos, utilizamos ferramentas externas:
+*   **vgmstream-cli**: Localizado em `tools/vgmstream-cli/`. É responsável por converter arquivos proprietários (como `.wem` do Wwise ou `.fsb` do FMOD) em áudio `.wav` padrão.
+*   **Instalação**: Esta pasta já deve acompanhar o repositório. Caso precise atualizar, baixe a versão CLI em [vgmstream.org](https://vgmstream.org) e extraia exatamente nesta pasta.
 
 ### 👤 Autor e Criador Original
 
@@ -142,12 +150,15 @@ Our system downloads high-quality voices and translation AI models directly from
 5. When it prompts for "Token:", paste the code you just copied. (Note: when you right-click to paste in the prompt, the characters remain "invisible" for security purposes. This is normal. Just press Enter).
 6. When asked about *Add token as git credential (Y/n)*, press `n` and then Enter. Done! Connection established.
 
-#### Step 3: The Translation Brain (Gema)
-Our translation artificial intelligence runs 100% locally. To make it work, you need its explicit weights:
-1. Go to the HuggingFace page and download this exact file model: `gemma-3n-E4B-it-Q4_K_M` (GGUF Format).
-2. Navigate to the root folder of your PhoenixDub project.
-3. Create a brand new folder named exactly `models`.
-4. Move the `gemma-3n-E4B-it-Q4_K_M` file inside the `models` folder.
+#### Step 3: The Translation Brain (Gema 4 via LM Studio)
+The translation and sync AI (Gema 4) now runs via **LM Studio** for better performance and ease of use:
+1. Download and install **LM Studio** at: [https://lmstudio.ai/](https://lmstudio.ai/)
+2. Open LM Studio and, in the search bar, look for: `unsloth/gemma-4-E4B-it-GGUF`.
+3. Choose the file ending in `Q4_K_M.gguf` (or higher) and click **Download**.
+4. Once downloaded, go to the **Local Server** icon (left side, <-> icon).
+5. Select the model at the top of the screen.
+6. Click **Start Server** and ensure the port is set to `1234`.
+7. **Important:** Keep LM Studio open with the server running while using PhoenixDub!
 
 #### Step 4: Automatic Installation (Setup)
 Our system features a robust interactive installer that will do all the heavy lifting for you (Creating the Python 3.10 architecture, downloading external software like FFmpeg, and injecting PIP dependencies automatically):
@@ -170,6 +181,11 @@ cd C:\IA_dublagem
 python app_jogos.py
 ```
 (Or run `python App_videos.py` for long-form films). The web interface will magically pop up in your browser!
+
+### 📁 Modding Tools (`tools` folder)
+To enable the **Universal Mod Manager** (vpk_manager.py) to extract complex game audio, we use external utilities:
+*   **vgmstream-cli**: Located in `tools/vgmstream-cli/`. It handles the conversion of proprietary formats (like Wwise `.wem` or FMOD `.fsb`) into standard `.wav` audio.
+*   **Installation**: This folder should be included in the repository. If you need to update it, download the CLI version from [vgmstream.org](https://vgmstream.org) and extract it exactly into this directory.
 
 ### 👤 Author & Original Creator
 
