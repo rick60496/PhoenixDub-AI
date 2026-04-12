@@ -31,8 +31,24 @@ def check_conda():
         print("Instale o Anaconda/Miniconda e marque 'Add to PATH' durante a instalação.")
         sys.exit(1)
 
+def accept_conda_tos():
+    """Tenta aceitar os termos de serviço do Conda automaticamente."""
+    print("[+] Aceitando termos de serviço do Conda...")
+    channels = [
+        "https://repo.anaconda.com/pkgs/main",
+        "https://repo.anaconda.com/pkgs/r",
+        "https://repo.anaconda.com/pkgs/msys2"
+    ]
+    for channel in channels:
+        try:
+            subprocess.run(f"conda tos accept --override-channels --channel {channel}", 
+                           shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        except:
+            pass
+
 def install_env():
     has_gpu = check_nvidia_gpu()
+    accept_conda_tos()
     
     print("\n" + "-"*65)
     if has_gpu:
