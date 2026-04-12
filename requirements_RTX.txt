@@ -9,6 +9,13 @@ psutil
 torch==2.1.2+cu118
 torchaudio==2.1.2+cu118
 onnxruntime-gpu
+# Peças do Motor CUDA (NVIDIA) - Download resiliente via PIP
+nvidia-cuda-runtime-cu11
+nvidia-cublas-cu11
+nvidia-cudnn-cu11
+nvidia-curand-cu11
+nvidia-cusolver-cu11
+nvidia-cusparse-cu11
 numpy<2.0
 scipy
 pyyaml

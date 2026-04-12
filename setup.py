@@ -70,17 +70,22 @@ def install_env():
         # Força Python 3.10 para evitar conflitos conhecidos
         run_cmd(f"conda create --prefix {ENV_PATH} python=3.10 -y")
         
-        print("\n[+] Instalando FFmpeg & dependências básicas...")
-        if has_gpu:
-            # [MODO TURBO] Instala o CUDA Toolkit oficial para garantir as DLLs da placa
-            print("[+] Instalando motor NVIDIA (CUDA Toolkit 11.8)...")
-            run_cmd(f"conda install --prefix {ENV_PATH} -c conda-forge ffmpeg tk -y")
-            run_cmd(f"conda install --prefix {ENV_PATH} -c nvidia cudatoolkit=11.8 -y")
-        else:
-            run_cmd(f"conda install --prefix {ENV_PATH} -c conda-forge ffmpeg tk -y")
+        print("\n[+] Instalando Ferramentas de Base (FFmpeg & TK)...")
+        # Mantemos apenas o essencial no Conda para ser rápido e não travar
+        run_cmd(f"conda install --prefix {ENV_PATH} -c conda-forge ffmpeg tk -y")
         
+        print("\n[+] Liberando comandos de Login (HuggingFace)...")
+        # Instala apenas o necessário para o login funcionar AGORA
+        run_cmd(f"conda run --prefix {ENV_PATH} pip install huggingface-hub")
+        
+        print("\n" + "*"*65)
+        print(" 🔑 AGORA VOCÊ PODE FAZER O LOGIN! 🔑")
+        print(" O comando 'huggingface-cli login' já está disponível.")
+        print(" Se desejar, faça o login agora em outro terminal antes de continuar.")
+        print("*"*65)
+
         print(f"\n[+] ✨ INSTALANDO CÉREBRO DE IA ({req_file}) ✨")
-        print("⏳ Esse passo pode levar alguns minutos. Vá tomar um café...")
+        print("⏳ Esse passo é o mais pesado. PIP ativado para maior resiliência...")
         run_cmd(f"conda run --prefix {ENV_PATH} pip install -r {req_file}")
         
         print("\n" + "="*65)
