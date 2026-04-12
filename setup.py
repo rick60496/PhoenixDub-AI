@@ -71,8 +71,9 @@ def install_env():
         run_cmd(f"conda create --prefix {ENV_PATH} python=3.10 -y")
         
         print("\n[+] Instalando Ferramentas de Base (FFmpeg & TK)...")
-        # Mantemos apenas o essencial no Conda para ser rápido e não travar
-        run_cmd(f"conda install --prefix {ENV_PATH} -c conda-forge ffmpeg tk -y")
+        # Usamos o repositório padrão (defaults) aqui por ser mais estável no Windows
+        # Isso evita os popups de erro 'Entry Point Not Found' do conda-forge
+        run_cmd(f"conda install --prefix {ENV_PATH} ffmpeg tk -y")
         
         print("\n[+] Liberando comandos de Login (HuggingFace)...")
         # Instala apenas o necessário para o login funcionar AGORA
