@@ -7,12 +7,21 @@ ENV_PATH = r"C:\IA_Dublagem_Files\env"
 
 def print_header():
     print("\n" + "="*65)
-    print(" 🛠️  PHOENIXDUB AI - GERENCIADOR DE AMBIENTE (v3.0) 🛠️ ")
+    print(" 🛠️  PHOENIXDUB AI - GERENCIADOR DE AMBIENTE (v18.6) 🛠️ ")
     print("="*65)
 
 def run_cmd(cmd):
-    # No Windows, shell=True ajuda a encontrar o conda
     subprocess.run(cmd, check=True, shell=True)
+
+def check_nvidia_gpu():
+    """Detecta se existe uma placa NVIDIA no sistema para ativar CUDA."""
+    try:
+        res = subprocess.run(["nvidia-smi"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        if res.returncode == 0:
+            return True
+    except:
+        pass
+    return False
 
 def check_conda():
     try:
@@ -23,100 +32,110 @@ def check_conda():
         sys.exit(1)
 
 def install_env():
-    print(f"\n[+] Criando ambiente virtual limpo em: {ENV_PATH}")
+    has_gpu = check_nvidia_gpu()
+    
+    print("\n" + "-"*65)
+    if has_gpu:
+        print(" ✨ DETECTADO: Hardware NVIDIA/CUDA presente! ✨")
+        print(" [MODO TURBO] O sistema será instalado para ALTA PERFORMANCE.")
+        req_file = "requirements_RTX.txt"
+    else:
+        print(" 💻 DETECTADO: Processador apenas (CPU Mode). 💻")
+        print(" [MODO ESTÁVEL] O sistema será instalado para máxima compatibilidade.")
+        req_file = "requirements.txt"
+    print("-"*65)
+
+    if not os.path.exists(req_file):
+        print(f"❌ ERRO: Arquivo {req_file} não encontrado na pasta!")
+        return
+
+    print(f"\n[+] Criando ambiente virtual em: {ENV_PATH}")
     try:
-        # Força Python 3.10 para evitar os conflitos relatados com PyTorch/Chatterbox
+        # Força Python 3.10 para evitar conflitos conhecidos
         run_cmd(f"conda create --prefix {ENV_PATH} python=3.10 -y")
-        print("[+] Ambiente Python 3.10 criado com sucesso!")
         
-        print("\n[+] Baixando e instalando softwares externos (FFmpeg & TK)...")
-        # tk é necessário para as janelas de arquivos do vpk_manager
-        run_cmd(f"conda install --prefix {ENV_PATH} -c conda-forge ffmpeg tk -y")
+        print("\n[+] Instalando FFmpeg & dependências básicas...")
+        if has_gpu:
+            # [MODO TURBO] Instala o CUDA Toolkit oficial para garantir as DLLs da placa
+            print("[+] Instalando motor NVIDIA (CUDA Toolkit 11.8)...")
+            run_cmd(f"conda install --prefix {ENV_PATH} -c conda-forge ffmpeg tk -y")
+            run_cmd(f"conda install --prefix {ENV_PATH} -c nvidia cudatoolkit=11.8 -y")
+        else:
+            run_cmd(f"conda install --prefix {ENV_PATH} -c conda-forge ffmpeg tk -y")
         
-        print("\n[+] ✨ INSTALANDO BIBLIOTECAS DE IA (PyTorch, Whisper, TTS, etc) ✨")
+        print(f"\n[+] ✨ INSTALANDO CÉREBRO DE IA ({req_file}) ✨")
         print("⏳ Esse passo pode levar alguns minutos. Vá tomar um café...")
-        run_cmd(f"conda run --prefix {ENV_PATH} pip install -r requirements.txt")
+        run_cmd(f"conda run --prefix {ENV_PATH} pip install -r {req_file}")
         
         print("\n" + "="*65)
-        print("🤖 FASE FINAL: CONFIGURAÇÃO DO CÉREBRO (GEMA 4 via LM STUDIO) 🤖")
+        print("🤖 FASE FINAL: CONFIGURAÇÃO DO GEMA 4 (LM STUDIO) 🤖")
         print("="*65)
-        print("\nEsta versão do sistema utiliza o LM STUDIO para processamento local.")
-        print("Siga os passos abaixo para concluir a instalação:")
         print("\n1. Baixe o LM Studio em: https://lmstudio.ai")
-        print("2. Dentro do LM Studio, pesquise por: unsloth/gemma-4-E4B-it-GGUF")
-        print("3. Baixe a versão 'Q4_K_M' ou superior.")
-        print("4. Vá na aba 'Local Server' (ícone de <-> no lado esquerdo).")
-        print("5. Carregue o modelo baixado no topo da tela.")
-        print("6. Clique em 'Start Server'.")
-        print("7. Garanta que a porta é a '1234'.")
+        print("2. Pesquise por: unsloth/gemma-4-E4B-it-GGUF")
+        print("3. Vá em 'Local Server' e clique em 'Start Server' (Porta 1234)")
         
         print("\n" + "="*65)
-        print("✅ AMBIENTE 100% PRONTO! ✅")
+        print("✅ AMBIENTE PRONTO! ✅")
         print("="*65)
-        print("\nPara usar o programa, mantenha o LM Studio aberto com o Server ligado e digite:\n")
+        print(f"\nPara rodar:")
         print(f"👉 1. conda activate {ENV_PATH}")
-        print(f"👉 2. python app_jogos.py  (ou App_videos.py)")
+        print(f"👉 2. python app_jogos.py  ou  python App_videos.py\n")
         
     except subprocess.CalledProcessError as e:
         print(f"\n❌ Erro crítico na instalação: {e}")
 
 def delete_env():
-    print(f"\n[!] Apagando o ambiente virtual corrompido em: {ENV_PATH}")
+    print(f"\n[!] Removendo o ambiente virtual em: {ENV_PATH}")
     try:
-        run_cmd(f"conda env remove --prefix {ENV_PATH} -y")
         if os.path.exists(ENV_PATH):
             shutil.rmtree(ENV_PATH, ignore_errors=True)
-        print("[+] Ambiente completamente deletado do disco.")
+            print("[+] Ambiente deletado com sucesso.")
+        else:
+            print("[?] O ambiente já não existia no local indicado.")
     except Exception as e:
-        print(f"❌ Erro ao tentar deletar a pasta: {e}")
-
-def reinstall_env():
-    print("\n🔄 Iniciando o modo de Auto-Reparo...")
-    delete_env()
-    install_env()
+        print(f"❌ Erro ao deletar: {e}")
 
 def main():
     check_conda()
     while True:
         print_header()
-        print("Escolha uma opção de Gerenciamento:")
-        print("  [ 1 ] 🟢 Instalar Ambiente de IA (Python 3.10 + Softwares)")
-        print("  [ 2 ] 🔄 Reinstalar/Reparar Ambiente (Apaga e refaz)")
-        print("  [ 3 ] 📖 Ver Instruções do LM Studio (Gema 4)")
-        print("  [ 4 ] ❌ Excluir Ambiente Definitivamente")
-        print("  [ 5 ] 🚪 Sair")
+        has_gpu = check_nvidia_gpu()
+        status_gpu = "🚀 RTX ATIVADA" if has_gpu else "💻 CPU APENAS"
         
-        choice = input("\n👉 Digite o número da opção (1-5): ").strip()
+        print(f"  Detecção de Hardware: {status_gpu}")
+        print("-" * 30)
+        print("  [ 1 ] 🟢 Instalar/Reparar Ambiente (Recomendado)")
+        print("  [ 2 ] 📖 Ver Instruções do LM Studio")
+        print("  [ 3 ] ❌ Desinstalar Ambiente (Apagar do HD)")
+        print("  [ 4 ] 🚪 Sair")
+        
+        choice = input("\n👉 Escolha uma opção (1-4): ").strip()
         
         if choice == '1':
             if os.path.exists(ENV_PATH):
-                print("\n⚠️ O ambiente já existe!")
+                conf = input("\n⚠️ O ambiente já existe. Deseja re-instalar por cima? (s/n): ").strip().lower()
+                if conf == 's':
+                    delete_env()
+                    install_env()
             else:
                 install_env()
             break
         elif choice == '2':
-            conf = input("Tem certeza que deseja reinstalar? (s/n): ").strip().lower()
-            if conf == 's':
-                reinstall_env()
-                break
+            print("\n- URL: http://localhost:1234\n- Modelo: gemma-4-E4B-it-Q4_K_M.gguf")
+            input("\nEnter para voltar...")
         elif choice == '3':
-            print("\n" + "-"*30)
-            print("CONFIGURAÇÃO DO LM STUDIO:")
-            print("- URL Server: http://localhost:1234")
-            print("- Modelo Recomendado: gemma-4-E4B-it-Q4_K_M.gguf")
-            print("- Repo: unsloth/gemma-4-E4B-it-GGUF")
-            print("-"*30)
-            input("\nAperte Enter para voltar...")
-        elif choice == '4':
-            conf = input("\n⚠️ Tem certeza que deseja destruir o ambiente? (s/n): ").strip().lower()
+            conf = input("\n⚠️ Tem certeza que deseja apagar? (s/n): ").strip().lower()
             if conf == 's':
                 delete_env()
             break
-        elif choice == '5':
+        elif choice == '4':
             print("Até logo!")
             break
         else:
             print("\n❌ Opção inválida.")
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()

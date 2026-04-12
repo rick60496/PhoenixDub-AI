@@ -39,6 +39,13 @@ from sklearn.metrics.pairwise import cosine_similarity
 # from sklearn.cluster import AgglomerativeClustering # [NOVO] Para clustering fixo
 
 from flask import Flask, send_from_directory, request, jsonify, make_response
+try:
+    from flask_cors import CORS # [NEW] Suporte a Cross-Origin
+    HAS_CORS = True
+except ImportError:
+    HAS_CORS = False
+    print("[AVISO] flask_cors não instalado. O painel web pode ter problemas de acesso se rodar em portas diferentes.")
+    print("Para corrigir, use: pip install flask-cors")
 from pydub.silence import split_on_silence
 
 # --- CONFIGURAÇÕES DE AMBIENTE (OFFLINE-FIRST) ---
@@ -138,6 +145,22 @@ GAME_PROFILES = {
         "audio_settings": {
             "loudnorm": "I=-20:TP=-1.5:LRA=7",
             "volume_boost_default": 4.0
+        }
+    },
+    "xcom": {
+        "name": "The Bureau: XCOM Declassified",
+        "ai_instructions": "Estilo: Anos 1960, Invasão Alienígena e Investigação de Agentes Especiais. O tom deve ser tático, mais formal e com suspense de Guerra Fria. Mantenha gírias de época e formalidade militar onde adequado.",
+        "glossary": {
+            "The Bureau": "The Bureau",
+            "Carter": "Carter",
+            "Outsider": "Forasteiro",
+            "Sleepwalker": "Sonâmbulo",
+            "Sectoid": "Sectoid",
+            "Muton": "Muton"
+        },
+        "audio_settings": {
+            "loudnorm": "I=-16:TP=-1.5:LRA=11",
+            "volume_boost_default": 0.0
         }
     }
 }
@@ -705,16 +728,21 @@ class VoiceGuard:
         return merged_count
 
 class SimpleDiarizer:
-    def __init__(self, source="speechbrain/spkrec-ecapa-voxceleb", device="cpu"):
+    def __init__(self, source="speechbrain/spkrec-ecapa-voxceleb", device=None):
         try:
             import torchaudio
             if not hasattr(torchaudio, 'list_audio_backends'):
                 def _list_audio_backends(): return ['soundfile']
                 torchaudio.list_audio_backends = _list_audio_backends
             
+            # [v12.5] HARDWARE ADAPTIVE DIARIZATION
+            if device is None:
+                device = get_optimal_device()
+            
             from speechbrain.inference.speaker import EncoderClassifier
             self.encoder = EncoderClassifier.from_hparams(source=source, run_opts={"device": device})
             self.device = device
+            logging.info(f"Diarizador iniciado em '{self.device}'.")
         except ImportError:
              logging.error("SpeechBrain não encontrado. Diarização falhará.")
              self.encoder = None
@@ -858,7 +886,7 @@ def is_junk_text(text):
         
     return False
 
-# --- VARIÁVEIS GLOBAIS E LOCKS ---
+# --- VARIÁVEIS GLOBAIS E LOCKS (Adaptativo v18.6) ---
 whisper_model = None
 chatterbox_model = None
 model_lock = Lock()
@@ -866,8 +894,15 @@ progress_dict, progress_lock = {}, Lock()
 active_jobs_lock = Lock()
 active_jobs = set()
 
+# [v18.6] TRAVA DE SEGURANÇA: 1 vídeo por vez para estabilidade total.
+MAX_CONCURRENT_JOBS = 1 
+
 # --- INICIALIZAÇÃO DO FLASK ---
 app = Flask(__name__, template_folder='client', static_folder='client')
+if HAS_CORS:
+    CORS(app) # [NEW] Habilita CORS para o frontend local
+else:
+    print("[AVISO] Rodando sem CORS. Instale com: pip install flask-cors")
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024 
 app.config['MAX_FORM_PARTS'] = 10000
@@ -985,6 +1020,26 @@ def set_progress(job_id, progress, etapa_idx, start_time, etapas_list, subetapa=
         status_data['status'] = 'processing' if etapa_idx < len(etapas_list) - 1 else 'completed'
         safe_json_write(status_data, status_path)
 
+def get_optimal_device():
+    """
+    Detecta o melhor hardware disponível (Adaptativo v12.5).
+    Ignora GPUs com menos de 4GB de VRAM para evitar gargalos em placas fracas.
+    """
+    import torch
+    if torch.cuda.is_available():
+        try:
+            vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            if vram >= 3.5:
+                logging.info(f"🚀 [HARDWARE] Placa NVIDIA detectada ({vram:.1f}GB VRAM). Ativando GPU Turbo!")
+                return "cuda"
+            else:
+                logging.info(f"🐢 [HARDWARE] GPU detectada, mas é fraca ({vram:.1f}GB VRAM). Usando CPU.")
+        except Exception as e:
+            logging.warning(f"Erro ao detectar VRAM: {e}. Usando CPU.")
+    else:
+        logging.info("💻 [HARDWARE] Nenhuma GPU compatível detectada. Usando CPU.")
+    return "cpu"
+
 def get_whisper_model():
     global whisper_model
     with model_lock:
@@ -992,16 +1047,16 @@ def get_whisper_model():
             import torch
             from faster_whisper import WhisperModel
             
-            if torch.cuda.is_available():
-                logging.info("GPU Detectada! Carregando Whisper ('small') em CUDA (float16)...")
+            device = get_optimal_device()
+            if device == "cuda":
+                logging.info("🚀 [HARDWARE] Whisper em CUDA (float16)!")
                 whisper_model = WhisperModel("small", device="cuda", compute_type="float16")
             else:
                 num_cores = os.cpu_count() or 4
                 whisper_threads = max(1, num_cores // 2)
-                logging.info(f"GPU não encontrada. Carregando Whisper ('small') em CPU (int8) com {whisper_threads} threads...")
+                logging.info(f"💻 [HARDWARE] Whisper em CPU (int8) com {whisper_threads} threads.")
                 whisper_model = WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=whisper_threads)
                 
-            logging.info("Modelo faster-whisper carregado.")
             logging.info("Modelo faster-whisper carregado.")
     return whisper_model
 
@@ -1035,19 +1090,14 @@ def get_chatterbox_model():
             try:
                 from chatterbox import ChatterboxMultilingualTTS
                 
-                # [v12.8] CPU-ONLY FORCE (User choice for GT 1030 efficiency)
-                device = "cpu"
+                device = get_optimal_device()
+                logging.info(f"🎤 [HARDWARE] Carregando Chatterbox Multilíngue em {device.upper()}...")
                 
-                # [v10.15] RAM/VRAM OPTIMIZATION
-                logging.info(f"Carregando Chatterbox Multilíngue em {device}...")
                 model_raw = ChatterboxMultilingualTTS.from_pretrained(device=device)
                 
                 # [v12.14 RESTAURAÇÃO TOTAL - FIDELIDADE ORIGINAL]
-                # Revertendo toda a quantização para garantir que o "ç" e o "ã" soem perfeitos.
-                # O processamento será mais lento, mas a qualidade será a máxima do modelo.
                 chatterbox_model = model_raw
-                logging.info(f"Modelo Chatterbox carregado com FIDELIDADE TOTAL (float32) em '{device}'.")
-                logging.info(f"Modelo Chatterbox carregado e otimizado com sucesso em '{device}'.")
+                logging.info(f"Modelo Chatterbox pronto para dublagem em '{device}'.")
             except Exception as e:
                 logging.critical(f"Falha ao carregar o modelo Chatterbox: {e}\n{traceback.format_exc()}")
                 logging.critical("Instrução: 'pip install chatterbox-tts'")
@@ -1879,6 +1929,19 @@ def wait_for_gema_service(progress_callback):
     except Exception:
         logging.error(">>> ERRO: Não consegui falar com o LM Studio. Certifique-se de que o 'Local Server' está LIGADO na porta 1234! <<<")
 
+def check_lm_studio():
+    """Verifica se o servidor do LM Studio está rodando na porta 1234."""
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(2)
+    result = sock.connect_ex(('127.0.0.1', 1234))
+    if result == 0:
+        logging.info("✅ CONEXÃO ESTABELECIDA: LM Studio detectado na porta 1234.")
+        return True
+    else:
+        logging.warning("⚠️ AVISO: LM Studio não detectado na porta 1234. Verifique se o 'Local Server' está ON.")
+        return False
+
 def make_gema_request_with_retries(payload, timeout=3600, retries=5, backoff_factor=2, is_translation=True):
     """
     [v12.50 LM STUDIO API PIVOT]
@@ -1891,8 +1954,8 @@ def make_gema_request_with_retries(payload, timeout=3600, retries=5, backoff_fac
     temp = payload.get("temperature", 0.3)
     max_tk = payload.get("max_tokens", 2048)
     
-    # Payload no padrão OpenAI (que o LM Studio usa)
     api_payload = {
+        "model": "local-model",
         "messages": messages,
         "temperature": temp,
         "max_tokens": max_tk,
@@ -1983,7 +2046,7 @@ manhattan_grn_3_4: "Outra tradução aqui"
     
     payload = {
         "messages": [
-            {"role": "system", "content": "Você é um motor de LOCALIZAÇÃO ARTÍSTICA E SINCRONIA. Responda apenas a lista final formatada."},
+            {"role": "system", "content": "<|think|>\nVocê é um motor de LOCALIZAÇÃO ARTÍSTICA E SINCRONIA. Responda apenas a lista final formatada."},
             {"role": "user", "content": prompt}
         ], 
         "temperature": 0.1,  
@@ -2083,7 +2146,7 @@ Responda APENAS com a versão corrigida, natural e dentro do tempo. Use aspas du
     try:
         payload = {
             "messages": [
-                {"role": "system", "content": "Você é um Diretor de Localização. Responda apenas o texto corrigido entre aspas. Proibido conversar."},
+                {"role": "system", "content": "<|think|>\nVocê é um Diretor de Localização. Responda apenas o texto corrigido entre aspas. Proibido conversar."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.3,
@@ -2142,7 +2205,7 @@ VOCÊ É UM DIRETOR DE DUBLAGEM EXPERIENTE. Sua missão é CORRIGIR a lista de t
     try:
         payload = {
             "messages": [
-                {"role": "system", "content": "Você é um Diretor de Localização. Responda apenas a lista corrigida entre aspas. Proibido conversar."},
+                {"role": "system", "content": "<|think|>\nVocê é um Diretor de Localização. Responda apenas a lista corrigida entre aspas. Proibido conversar."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.2,
@@ -2279,7 +2342,7 @@ VOCÊ É UM DIRETOR DE DUBLAGEM. Sua missão é escolher a opção que soe mais 
     try:
         payload = {
             "messages": [
-                {"role": "system", "content": "Você é Curador de Dublagem. Responda apenas o ID e a escolha (Ex: id_01: B). Proibido conversar."},
+                {"role": "system", "content": "<|think|>\nVocê é Curador de Dublagem. Responda apenas o ID e a escolha (Ex: id_01: B). Proibido conversar."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.1,
@@ -2678,8 +2741,8 @@ def gerar_relatorio_final(job_dir, job_id, project_data, file_format_map):
 # --- FUNÇÕES PRINCIPAIS DOS PIPELINES ---
 def processar_transcricao(job_dir, job_id, start_time):
     with active_jobs_lock:
-        if job_id in active_jobs:
-            logging.warning(f"Job de transcrição '{job_id}' já em execução. Ignorando.")
+        if len(active_jobs) >= MAX_CONCURRENT_JOBS:
+            logging.warning(f"❌ [HARDWARE] Limite de {MAX_CONCURRENT_JOBS} job(s) atingido. Ignorando {job_id}.")
             return
         active_jobs.add(job_id)
 
@@ -2752,8 +2815,8 @@ def processar_transcricao(job_dir, job_id, start_time):
 
 def processar_conversao(job_dir, job_id, start_time):
     with active_jobs_lock:
-        if job_id in active_jobs:
-            logging.warning(f"Job de conversão '{job_id}' já em execução. Ignorando.")
+        if len(active_jobs) >= MAX_CONCURRENT_JOBS:
+            logging.warning(f"❌ [HARDWARE] Limite de {MAX_CONCURRENT_JOBS} job(s) atingido. Ignorando {job_id}.")
             return
         active_jobs.add(job_id)
     
@@ -2885,9 +2948,9 @@ def try_reconstruct_project_from_all_backups(job_dir):
 
 def processar_dublagem_jogos(job_dir, job_id, start_time):
     with active_jobs_lock:
-        if job_id in active_jobs:
-            logging.warning(f"Tentativa de iniciar o trabalho '{job_id}' que já está em execução. A nova tentativa foi ignorada.")
-            return
+        if len(active_jobs) >= MAX_CONCURRENT_JOBS:
+             logging.warning(f"❌ [HARDWARE] Limite de {MAX_CONCURRENT_JOBS} job(s) atingido. Ignorando {job_id}.")
+             return
         active_jobs.add(job_id)
     
     try:
@@ -3086,6 +3149,12 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
             if seg_data.get('detected_language') == 'pt':
                 if not seg_data.get('sanitized_text'):
                     seg_data['sanitized_text'] = seg_data.get('original_text', '')
+                
+                # [FIX] Garante a existência do backup para não acionar o apagamento forçado (fallback manual)
+                backup_path_pt = job_dir / "_backup_texto_final" / f"{seg_data['id']}.json"
+                if not backup_path_pt.exists():
+                    safe_json_write(seg_data, backup_path_pt)
+                    
                 logging.info(f"Segmento {seg_data['id']} preservado (já é Português).")
 
             # [v12.32 SINCRONIA DE DADOS]
@@ -3431,7 +3500,13 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
             for i, seg_data in enumerate(actual_generation_queue):
                 output_path = dubbed_audio_dir / f"{seg_data['id']}_dubbed.wav"
                 
-                # [v12.15 VISUAL PROGRESS] Destaque para o progresso geral (Garante visibilidade no console)
+                # [v18.6] Limpeza Periódica de VRAM para evitar calor excessivo na RTX
+                if i > 0 and i % 25 == 0:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        logging.info("🧹 [HARDWARE] Limpeza periódica de VRAM realizada para controle térmico.")
+
+                # [v12.15 VISUAL PROGRESS] Destaque para o progresso geral
                 perc_total = 5 + (i / len(actual_generation_queue)) * 95
                 cb(perc_total, 6, f"Gerando {i+1}/{len(actual_generation_queue)}: {seg_data['id']}")
                 logging.info(f"\n >>> PROGRESSO DO JOB: {perc_total:.1f}% <<< [Processando {i+1} de {len(actual_generation_queue)}]\n")
@@ -4063,9 +4138,9 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
 # --- FUNÇÃO DE REMOÇÃO DE RÁDIO/NOISE (SUBSTITUI OPENUNMIX) ---
 def processar_separacao(job_dir, job_id, start_time):
     with active_jobs_lock:
-        if job_id in active_jobs:
-            logging.warning(f"Job de remoção de rádio '{job_id}' já em execução. Ignorando.")
-            return
+        if len(active_jobs) >= MAX_CONCURRENT_JOBS:
+             logging.warning(f"❌ [HARDWARE] Limite de {MAX_CONCURRENT_JOBS} job(s) atingido. Ignorando {job_id}.")
+             return
         active_jobs.add(job_id)
     
     try:
@@ -4666,6 +4741,7 @@ def send_upload(path): return send_from_directory(app.config['UPLOAD_FOLDER'], p
 
 if __name__ == "__main__":
     check_ffmpeg()
+    check_lm_studio() # [NEW] Alerta sobre o estado do cérebro IA
     host, port = "127.0.0.1", 5001
     url = f"http://{host}:{port}"
     

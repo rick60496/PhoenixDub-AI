@@ -35,7 +35,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 from enum import Enum
 import ffmpeg # Para info de mídia (probe)
 from pydub import AudioSegment, effects # [NEW] Effects para speedup
-from flask import send_file # [FIX] Import necessário para download
+from flask import send_file, Flask, send_from_directory, request, jsonify, make_response # [FIX] Import necessário para download
+from flask_cors import CORS # [NEW] Suporte a Cross-Origin
 from sklearn.cluster import AgglomerativeClustering # [NEW] v10 Diarization
 from scipy.spatial.distance import cdist # [NEW] v10 Diarization
 
@@ -362,9 +363,9 @@ EMOTION_TO_STYLE_PROMPT = {
     'sarcástico': 'speaking in a sarcastic and mocking tone', 'default': 'speaking calmly'
 }
 
-# --- VARIÁVEIS GLOBAIS E LOCKS (Arquitetura do app_jogos) ---
+# --- VARIÁVEIS GLOBAIS E LOCKS (Arquitetura Adaptativa v18.6) ---
 whisper_model = None
-chatterbox_tts_model = None # [v7.1] Chatterbox Primary Engine (Singular)
+chatterbox_tts_model = None 
 model_lock = Lock()
 openvoice_lock = Lock()
 chatterbox_lock = Lock()
@@ -372,9 +373,13 @@ progress_dict, progress_lock = {}, Lock()
 active_jobs_lock = Lock()
 active_jobs = set()
 
+# [v18.6] TRAVA DE SEGURANÇA: 1 vídeo por vez para estabilidade total.
+MAX_CONCURRENT_JOBS = 1 
+
 
 # --- INICIALIZAÇÃO DO FLASK ---
 app = Flask(__name__, template_folder='client', static_folder='client') # Servir do diretório client
+CORS(app) # [NEW] Habilita CORS para o frontend local
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 4 * 1024 * 1024 * 1024 # Limite de 4GB para uploads
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -703,10 +708,17 @@ def get_whisper_model():
     global whisper_model
     with model_lock:
         if whisper_model is None:
-            num_cores = os.cpu_count() or 4
-            whisper_threads = max(1, num_cores // 2)
-            logging.info(f"Carregando modelo faster-whisper 'small' para CPU (usando {whisper_threads} threads)...")
-            whisper_model = WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=whisper_threads)
+            device_opt = get_optimal_device()
+            
+            if device_opt == "cuda":
+                logging.info("🚀 [HARDWARE] Whisper em CUDA (float16)!")
+                whisper_model = WhisperModel("small", device="cuda", compute_type="float16")
+            else:
+                num_cores = os.cpu_count() or 4
+                whisper_threads = max(1, num_cores // 2)
+                logging.info(f"💻 [HARDWARE] Whisper em CPU (int8) com {whisper_threads} threads.")
+                whisper_model = WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=whisper_threads)
+                
             logging.info("Modelo faster-whisper carregado.")
     return whisper_model
 
@@ -719,8 +731,8 @@ def get_openvoice_model():
         
     with openvoice_lock:
         if openvoice_converter is None:
-            logging.info("Carregando modelo OpenVoice V2 para CPU (Motor Padrão)...")
-            device = "cpu"
+            device = get_optimal_device()
+            logging.info(f"🔧 [HARDWARE] OpenVoice em {device.upper()}...")
             try:
                 if not Path('resources/checkpoints/converter').exists():
                      raise FileNotFoundError("Checkpoints do OpenVoice não encontrados em 'resources/checkpoints/converter'")
@@ -731,6 +743,20 @@ def get_openvoice_model():
                 logging.critical(f"Falha ao carregar o modelo OpenVoice: {e}\n{traceback.format_exc()}")
                 raise e
     return openvoice_converter, openvoice_se_model
+
+def get_optimal_device():
+    """
+    Detecta o melhor hardware disponível (Adaptativo v18.6).
+    Ignora GPUs com menos de 4GB de VRAM para evitar bugs em placas fracas (GT 1030, etc).
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            if vram >= 3.5:
+                return "cuda"
+    except: pass
+    return "cpu"
 
 def get_chatterbox_model():
     """Carrega o modelo Chatterbox TTS (Resemble AI) - [v7.1] (Pure Mode)."""
@@ -743,16 +769,21 @@ def get_chatterbox_model():
                 logging.error("Biblioteca 'chatterbox-tts' não encontrada. Instale com 'pip install chatterbox-tts'.")
                 return None
                 
-            num_cores = os.cpu_count() or 4
-            # [USER REQUEST v7.1] Usar 3 núcleos (PC tem 4, deixamos 1 livre pro Windows)
-            torch_threads = 3
-            torch.set_num_threads(torch_threads)
+            device_opt = get_optimal_device()
             
-            logging.info(f"Carregando Modelo Chatterbox MULTILÍNGUE (Otimizado CPU) - Usando {torch_threads} threads fixas...")
+            if device_opt == "cpu":
+                num_cores = os.cpu_count() or 4
+                torch_threads = 3
+                import torch
+                torch.set_num_threads(torch_threads)
+                logging.info(f"🎤 [HARDWARE] Chatterbox em CPU (Modo Otimizado - {torch_threads} threads).")
+            else:
+                logging.info("🚀 [HARDWARE] Chatterbox em GPU (Modo Turbo CUDA)!")
+
             try:
                 # [FIX v7.2] ChatterboxMultilingualTTS é necessário para PT
-                chatterbox_tts_model = ChatterboxMultilingualTTS.from_pretrained(device="cpu") 
-                logging.info("Modelo Chatterbox MULTILÍNGUE carregado com sucesso.")
+                chatterbox_tts_model = ChatterboxMultilingualTTS.from_pretrained(device=device_opt) 
+                logging.info(f"Modelo Chatterbox carregado com sucesso em '{device_opt}'.")
             except Exception as e:
                 logging.error(f"Erro ao carregar Chatterbox MTL: {e}")
                 return None
@@ -799,6 +830,19 @@ def wait_for_gema_service(progress_callback):
             logging.warning(">>> LM Studio respondeu, mas algo está errado. Verifique o servidor. <<<")
     except Exception:
         logging.error(">>> ERRO: Não consegui falar com o LM Studio. Certifique-se de que o 'Local Server' está LIGADO na porta 1234! <<<")
+
+def check_lm_studio():
+    """Verifica se o servidor do LM Studio está rodando na porta 1234."""
+    import socket
+    sock = socket.socket(socket.socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(2)
+    result = sock.connect_ex(('127.0.0.1', 1234))
+    if result == 0:
+        logging.info("✅ CONEXÃO ESTABELECIDA: LM Studio detectado na porta 1234.")
+        return True
+    else:
+        logging.warning("⚠️ AVISO: LM Studio não detectado na porta 1234. Verifique se o 'Local Server' está ON.")
+        return False
 
 def make_gema_request_with_retries(payload, timeout=3600, retries=5, backoff_factor=2, is_translation=True):
     """
@@ -861,7 +905,7 @@ Sua missão é classificar o lote de frases em inglês.
     try:
         payload = {
             "messages": [
-                {"role": "system", "content": "Você é Analista de Vibe. Responda apenas a tag. Proibido conversar."},
+                {"role": "system", "content": "<|think|>\nVocê é Analista de Vibe. Responda apenas a tag. Proibido conversar."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.1,
@@ -950,7 +994,7 @@ id: [A]: "Texto Fiel" | [B]: "Texto Brasil & Sincronia"
     
     payload = {
         "messages": [
-            {"role": "system", "content": "Você é um motor de LOCALIZAÇÃO ARTÍSTICA E SINCRONIA. Responda apenas a lista final formatada."},
+            {"role": "system", "content": "<|think|>\nVocê é um motor de LOCALIZAÇÃO ARTÍSTICA E SINCRONIA. Responda apenas a lista final formatada."},
             {"role": "user", "content": prompt}
         ], 
         "temperature": 0.1, 
@@ -1024,7 +1068,7 @@ VOCÊ É UM DIRETOR DE DUBLAGEM. Sua missão é escolher a opção (A ou B) que 
     try:
         payload = {
             "messages": [
-                {"role": "system", "content": "Você é Curador de Dublagem. Responda apenas o ID e a escolha (Ex: seg_0001: B)."},
+                {"role": "system", "content": "<|think|>\nVocê é Curador de Dublagem. Responda apenas o ID e a escolha (Ex: seg_0001: B)."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.1, 
@@ -1076,7 +1120,7 @@ VOCÊ É UM DIRETOR DE DUBLAGEM EXPERIENTE. Sua missão é CORRIGIR as traduçõ
     try:
         payload = {
             "messages": [
-                {"role": "system", "content": "Você é um Diretor de Localização. Responda apenas a lista corrigida entre aspas."},
+                {"role": "system", "content": "<|think|>\nVocê é um Diretor de Localização. Responda apenas a lista corrigida entre aspas."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.2,
@@ -1107,45 +1151,112 @@ VOCÊ É UM DIRETOR DE DUBLAGEM EXPERIENTE. Sua missão é CORRIGIR as traduçõ
 # --- HELPER: GENDER DETECTION (Pitch-Based) ---
 def predict_gender_from_audio(wav_path, start_sec, end_sec):
     """
-    Estima gênero (Masculino/Feminino) baseando-se na frequência fundamental (Pitch/F0).
-    Librosa Piptrack. Threshold: 165Hz.
+    Estima a frequência fundamental (Pitch/F0) média de um trecho.
+    Retorna o valor em Hz.
     """
     try:
         import librosa
         import numpy as np
         
         duration = end_sec - start_sec
-        if duration < 0.5: return "Desconhecido" # Muito curto
+        # Pega amostra central de 2s se for muito longo, ou o trecho todo
+        read_duration = min(duration, 2.0)
+        offset = start_sec + (duration - read_duration) / 2
         
-        # Carrega apenas o trecho necessário (otimização)
-        y, sr = librosa.load(wav_path, sr=22050, offset=start_sec, duration=duration)
+        y, sr = librosa.load(wav_path, sr=16000, offset=offset, duration=read_duration)
         
-        # Extrai Pitch
-        pitches, magnitudes = librosa.piptrack(y=y, sr=sr)
+        # Filtro de voz humana (ECAPA-TDNN range)
+        pitches, magnitudes = librosa.piptrack(y=y, sr=sr, fmin=75, fmax=350)
         
         # Seleciona pitches com magnitude relevante
-        pitches = pitches[magnitudes > np.median(magnitudes)]
-        pitches = pitches[pitches > 70] # Filtra ruído grave (<70Hz)
-        pitches = pitches[pitches < 400] # Filtra ruído agudo (>400Hz)
+        pitches = pitches[magnitudes > np.percentile(magnitudes, 70)]
         
-        if len(pitches) == 0: return "Desconhecido"
+        if len(pitches) == 0: return 0
         
-        avg_pitch = np.mean(pitches)
-        
-        # Threshold padrão: 165Hz
-        gender = "Feminino" if avg_pitch > 165 else "Masculino"
-        logging.info(f"Gender Detect (Pitch {avg_pitch:.1f}Hz): {gender}")
-        return gender
-    except ImportError:
-        logging.warning("Librosa não instalado. Detecção de gênero desativada.")
-        return "Desconhecido"
+        avg_pitch = np.median(pitches)
+        return float(avg_pitch)
     except Exception as e:
-        logging.warning(f"Erro detectando gênero: {e}")
-        return "Desconhecido"
+        logging.warning(f"Erro detectando gênero (Hz): {e}")
+        return 0
+
+def gema_voice_gender_auditor(speaker_id, transcript_samples, avg_hz):
+    """
+    [NEW AGENT] O Auditor de Gênero.
+    Usa o contexto do texto para decidir o gênero quando a matemática é ambígua.
+    """
+    prompt = f"""[AUDITOR DE GÊNERO - GEMMA 4]
+    O sistema de áudio está em dúvida sobre o gênero deste orador.
+    
+    [DADOS TÉCNICOS]:
+    - ID do Orador: {speaker_id}
+    - Frequência Média: {avg_hz:.1f} Hz
+    
+    [AMONSTRAS DE DIÁLOGO]:
+    \"\"\"
+    {transcript_samples}
+    \"\"\"
+    
+    [TAREFA]:
+    Analise o texto e os Hz. 
+    1. Procure por nomes próprios (John, Maria).
+    2. Procure por flexões de gênero (Obrigado/Obrigada, Sou um/Sou uma).
+    3. Procure por pistas de tratamento (Senhor, Senhora).
+    
+    [RESPOSTA OBRIGATÓRIA]:
+    Responda APENAS: "Masculino" ou "Feminino".
+    """
+    payload = {
+        "messages": [
+            {"role": "system", "content": "<|think|>\nVocê é um Auditor Linguístico especializado em identificar gênero por contexto textual."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.1,
+        "max_tokens": 10
+    }
+    try:
+        response = make_gema_request_with_retries(payload, is_translation=False)
+        decision = response.json()['choices'][0]['message']['content'].strip()
+        # Limpa pontuação
+        decision = re.sub(r'[^\w\s]', '', decision).capitalize()
+        return decision if decision in ["Masculino", "Feminino"] else None
+    except: return None
+
+def gema_speaker_match_consolidator(spk_a, spk_b, transcript_a, transcript_b, hz_a, hz_b, distance):
+    """
+    [NEW AGENT] O Unificador de Vozes.
+    Decide se duas identidades são na verdade a mesma pessoa.
+    """
+    prompt = f"""[CONSOLIDATÓRIO DE IDENTIDADE - GEMMA 4]
+    Dois grupos de áudio foram separados, mas podem ser a mesma pessoa.
+    
+    [DADOS TÉCNICOS]:
+    - Distância de Áudio (SpeechBrain): {distance:.4f} (Menor é mais parecido)
+    - Voz A ({hz_a:.1f} Hz): "{transcript_a[:300]}..."
+    - Voz B ({hz_b:.1f} Hz): "{transcript_b[:300]}..."
+    
+    [TAREFA]:
+    Com base no assunto, estilo de fala e similaridade técnica, eles são o mesmo personagem?
+    
+    [RESPOSTA OBRIGATÓRIA]:
+    Responda APENAS: "MERGE" ou "KEEP".
+    """
+    payload = {
+        "messages": [
+            {"role": "system", "content": "<|think|>\nVocê é um Diretor de Elenco. Decida se as vozes pertencem ao mesmo ator/personagem."},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.1,
+        "max_tokens": 10
+    }
+    try:
+        response = make_gema_request_with_retries(payload, is_translation=False)
+        decision = response.json()['choices'][0]['message']['content'].strip().upper()
+        return "MERGE" in decision
+    except: return False
 
 def identify_speaker_gender_map(project_data, audio_path, cb=None):
     """
-    Cria um mapa {voz_id: Genero} analisando o melhor segmento de cada orador.
+    [v12.0 REFINED] Cria um mapa {voz_id: Genero} com auditoria inteligente.
     """
     speaker_segments = {}
     for seg in project_data:
@@ -1154,19 +1265,44 @@ def identify_speaker_gender_map(project_data, audio_path, cb=None):
         speaker_segments[spk].append(seg)
         
     gender_map = {}
+    pitch_map = {} # Cache de Hz para o consolidator
     total_speakers = len(speaker_segments)
     
     for i, (spk, segs) in enumerate(speaker_segments.items()):
-        if cb: cb(i/total_speakers*100, 4, f"Detectando Gênero: {spk}...")
+        if cb: cb(i/total_speakers*100, 4, f"Auditando Gênero: {spk}...")
         
-        # Escolhe o segmento mais longo (mais confiável)
-        best_seg = max(segs, key=lambda s: s['end'] - s['start'])
+        # Multisampling: Pega os 3 melhores segmentos
+        sorted_segs = sorted(segs, key=lambda s: s['end'] - s['start'], reverse=True)
+        samples_hz = []
+        for s_idx in range(min(3, len(sorted_segs))):
+            hz = predict_gender_from_audio(str(audio_path), sorted_segs[s_idx]['start'], sorted_segs[s_idx]['end'])
+            if hz > 0: samples_hz.append(hz)
+            
+        if not samples_hz:
+            gender_map[spk] = "Masculino" # Default
+            pitch_map[spk] = 120
+            continue
+            
+        avg_hz = sum(samples_hz) / len(samples_hz)
+        pitch_map[spk] = avg_hz
         
-        gender = predict_gender_from_audio(str(audio_path), best_seg['start'], best_seg['end'])
+        # Lógica de Decisão (Híbrida)
+        # Masculino Típico < 140Hz | Feminino Típico > 185Hz
+        if avg_hz < 140:
+            gender = "Masculino"
+        elif avg_hz > 185:
+            gender = "Feminino"
+        else:
+            # ZONA CINZENTA (Audit Gemma)
+            logging.info(f"   -> 🦇 [GREY ZONE] Hz: {avg_hz:.1f} para {spk}. Acionando Auditor Gemma...")
+            combined_text = " ".join([s.get('original_text', '')[:100] for s in sorted_segs[:5]])
+            gema_gender = gema_voice_gender_auditor(spk, combined_text, avg_hz)
+            gender = gema_gender if gema_gender else ("Feminino" if avg_hz > 165 else "Masculino") # Fallback
+            
         gender_map[spk] = gender
-        logging.info(f"Orador {spk} -> {gender} (Baseado no seg {best_seg['id']})")
+        logging.info(f"Orador {spk} -> {gender} (Pitch Médio: {avg_hz:.1f}Hz)")
         
-    return gender_map
+    return gender_map, pitch_map
 
 def analyze_full_video_context(project_data, job_dir, cb=None):
     """
@@ -1207,7 +1343,14 @@ def analyze_full_video_context(project_data, job_dir, cb=None):
         Termo (Inglês) = Tradução (Português)
         """
         try:
-            payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 400} 
+            payload = {
+                "messages": [
+                    {"role": "system", "content": "<|think|>\nVocê é Analista de Cenário e Termos Técnicos."},
+                    {"role": "user", "content": prompt}
+                ], 
+                "temperature": 0.1, 
+                "max_tokens": 400
+            } 
             resp = make_gema_request_with_retries(payload)
             terms = resp.json()['choices'][0]['message']['content'].strip()
             detected_terms.append(terms)
@@ -1254,7 +1397,14 @@ def analyze_full_video_context(project_data, job_dir, cb=None):
     PROCESSAR:"""
     
     try:
-        payload = {"messages": [{"role": "user", "content": final_prompt}], "temperature": 0.1, "max_tokens": 800}
+        payload = {
+            "messages": [
+                {"role": "system", "content": "<|think|>\nVocê é um Analista de Contexto Final. Resuma o cenário e consolide o glossário definitivo."},
+                {"role": "user", "content": final_prompt}
+            ], 
+            "temperature": 0.1, 
+            "max_tokens": 800
+        }
         resp = make_gema_request_with_retries(payload, timeout=600) # [FIX] 10min para análise profunda
         final_context = resp.json()['choices'][0]['message']['content'].strip()
         
@@ -1294,7 +1444,14 @@ def gema_etapa_0_contexto(full_transcript_sample):
        - Se for Jogo: "Save = Salvar" (Nunca Economizar).
     """
     
-    payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 600}
+    payload = {
+        "messages": [
+            {"role": "system", "content": "<|think|>\nVocê é um Analista de Contexto Literário e Auditor de Tom."},
+            {"role": "user", "content": prompt}
+        ], 
+        "temperature": 0.2, 
+        "max_tokens": 600
+    }
     try:
         response = make_gema_request_with_retries(payload)
         context = response.json()['choices'][0]['message']['content'].strip()
@@ -1333,7 +1490,14 @@ def gema_etapa_1_traducao(original_text, video_context="", speaker_name="Voz", p
     "Tradução" | Explicação Curta
     """
     
-    payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0.45, "max_tokens": 1000}
+    payload = {
+        "messages": [
+            {"role": "system", "content": "<|think|>\nVocê é um Tradutor Literário de Elite especializado em Dublagem."},
+            {"role": "user", "content": prompt}
+        ], 
+        "temperature": 0.45, 
+        "max_tokens": 1000
+    }
     try:
         response = make_gema_request_with_retries(payload)
         raw_text = response.json()['choices'][0]['message']['content'].strip()
@@ -1601,7 +1765,14 @@ def gema_etapa_2_sincronizacao(original_text, translated_text, duration_seconds,
 
     # [MODIFICADO] Prompt Único já definido acima. Bloco antigo removido.
     
-    payload = {"messages": [{"role": "user", "content": prompt}], "temperature": temperature, "max_tokens": 600}
+    payload = {
+        "messages": [
+            {"role": "system", "content": "<|think|>\nVocê é Especialista em Sincronia Labial (Lip-Sync). Adapte o texto para o tempo exato."},
+            {"role": "user", "content": prompt}
+        ], 
+        "temperature": temperature, 
+        "max_tokens": 600
+    }
     try:
         response = make_gema_request_with_retries(payload, timeout=300)
         content = response.json()['choices'][0]['message']['content'].strip()
@@ -1677,7 +1848,14 @@ def gema_etapa_3_adaptacao_tts(synced_text, is_retry=False, context=""):
     Mantenha '!' e '?'. Não termine com ponto ou vírgula.
 Texto: "{synced_text}"
 Texto Ajustado:"""
-    payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 1000}
+    payload = {
+        "messages": [
+            {"role": "system", "content": "<|think|>\nVocê é um Revisor de Pontuação e Melodia para TTS (Vetor de Voz)."},
+            {"role": "user", "content": prompt}
+        ], 
+        "temperature": 0.2, 
+        "max_tokens": 1000
+    }
     try:
         response = make_gema_request_with_retries(payload, timeout=300)
         return sanitize_tts_text(response.json()['choices'][0]['message']['content'])
@@ -1703,12 +1881,14 @@ def extract_audio(video_path, audio_path, cb):
 # --- [DIARIZAÇÃO & INTELIGÊNCIA DE VÍDEO] ---
 
 class SimpleDiarizer:
-    def __init__(self, source="speechbrain/spkrec-ecapa-voxceleb", device="cpu"):
+    def __init__(self, source="speechbrain/spkrec-ecapa-voxceleb", device=None):
+        if device is None:
+            device = get_optimal_device()
         try:
             from speechbrain.inference.speaker import EncoderClassifier
             self.encoder = EncoderClassifier.from_hparams(source=source, run_opts={"device": device})
             self.device = device
-            logging.info(f"SimpleDiarizer inicializado com modelo {source}")
+            logging.info(f"SimpleDiarizer inicializado em '{self.device}' com modelo {source}")
         except ImportError:
             # Fallback para versoes antigas onde ficava em pretrained
             from speechbrain.pretrained import EncoderClassifier
@@ -2110,7 +2290,7 @@ def run_transcription_driven_diarization(job_dir, vocals_path, project_data, cb,
         
         clusterer = AgglomerativeClustering(
             n_clusters=num_speakers if num_speakers and num_speakers > 1 else None, 
-            distance_threshold=0.85, 
+            distance_threshold=0.55, # [v12.0] Threshold mais conservador para evitar fusão cega
             metric='cosine', 
             linkage='average'
         )
@@ -2118,6 +2298,54 @@ def run_transcription_driven_diarization(job_dir, vocals_path, project_data, cb,
         X = np.array(all_word_embeddings)
         labels = clusterer.fit_predict(X)
         
+        # [v12.1 NEW] CONSOLIDAÇÃO AGÊNTICA PÓS-CLUSTERING
+        cb(70, etapa_idx, "Gemma 4 Auditor: Consolidando identidades de voz...")
+        from collections import Counter
+        unique_labels = sorted(list(set(labels)))
+        
+        # Calcula centróide (média) de cada cluster para comparação
+        cluster_centroids = {}
+        cluster_transcripts = {}
+        for lbl in unique_labels:
+            indices = np.where(labels == lbl)[0]
+            cluster_centroids[lbl] = np.mean(X[indices], axis=0)
+            
+            # Pega as 5 maiores frases deste cluster para o Gemma ler
+            cluster_text = ""
+            for idx in indices[:15]: # Amostra de palavras
+                m = word_map[idx]
+                cluster_text += segs_list[m['s_idx']]['words'][m['w_idx']]['word']
+            cluster_transcripts[lbl] = cluster_text
+            
+        # [NOVO] Mapa de fusão (Merger Map)
+        merger_map = {lbl: lbl for lbl in unique_labels}
+        
+        # Compara pares de clusters (apenas se a distância for "interessante")
+        from scipy.spatial.distance import cosine
+        for i in range(len(unique_labels)):
+            for j in range(i + 1, len(unique_labels)):
+                lbl_a, lbl_b = unique_labels[i], unique_labels[j]
+                dist = cosine(cluster_centroids[lbl_a], cluster_centroids[lbl_b])
+                
+                # Se a distância estiver entre 0.4 e 0.75, está na zona de fusão inteligente
+                if dist < 0.75:
+                    logging.info(f"   -> 🤖 [CONSOLIDATION CANDIDATE] Voz {lbl_a+1} vs Voz {lbl_b+1} (Dist: {dist:.3f}). Chamando Gemma...")
+                    
+                    # Para o consolidator, precisamos de Hz aproximados
+                    # (Aqui usamos valores mock ou uma média rápida se disponível, 
+                    # mas o consolidator em identify_speaker_gender_map é mais preciso)
+                    if gema_speaker_match_consolidator(
+                        f"voz{lbl_a+1}", f"voz{lbl_b+1}", 
+                        cluster_transcripts[lbl_a], cluster_transcripts[lbl_b], 
+                        150, 150, dist # 150 é neutro
+                    ):
+                        logging.info(f"   >>> [MERGE APPROVED] Voz {lbl_b+1} será fundida na Voz {lbl_a+1}!")
+                        merger_map[lbl_b] = merger_map[lbl_a]
+                        
+        # Aplica o merger map nos labels
+        final_labels = np.array([merger_map[lbl] for lbl in labels])
+        labels = final_labels
+
         # 5. RE-CONSTRUÇÃO DE SEGMENTOS (The "Corte" and "Merge" Final)
         cb(80, etapa_idx, "Finalizando reconstrução do roteiro...")
         
@@ -3593,9 +3821,15 @@ def generate_dubbed_audio(job_dir, project_data, cb):
     
     logging.info(f"Referência de falha (Global Fallback): {global_fallback}")
 
-    for i, seg_data in enumerate(segs_list): # Use segs_list here
-        progress = (i + 1) / len(segs_list) * 100 # Use segs_list here
-        cb(progress, 7, f"Gerando áudio {i+1}/{len(segs_list)} (Chatterbox)") # Use segs_list here
+    for i, seg_data in enumerate(segs_list): 
+        # [v18.6] Gestão Térmica: Limpeza periódica para manter a RTX fria
+        if i > 0 and i % 25 == 0:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                logging.info("🧹 [HARDWARE] Limpeza periódica de VRAM (App_videos) para controle térmico.")
+
+        progress = (i + 1) / len(segs_list) * 100 
+        cb(progress, 7, f"Gerando áudio {i+1}/{len(segs_list)} (Chatterbox)") 
         
         save_path = dubbed_audio_dir / f"{seg_data['id']}_dubbed.wav"
         if save_path.exists(): continue
@@ -4154,9 +4388,9 @@ def run_blind_diarization_pass(job_dir, vocals_path, cb, etapa_idx):
 def pipeline_dublar_video(job_dir, job_id, start_time):
     """Pipeline principal para dublagem de vídeo."""
     with active_jobs_lock:
-        if job_id in active_jobs:
-            logging.warning(f"Tentativa de iniciar o trabalho '{job_id}' que já está em execução. Ignorado.")
-            return
+        if len(active_jobs) >= MAX_CONCURRENT_JOBS:
+             logging.warning(f"❌ [HARDWARE] Limite de {MAX_CONCURRENT_JOBS} job(s) atingido. Ignorando {job_id}.")
+             return
         active_jobs.add(job_id)
     
     try:
@@ -4587,7 +4821,9 @@ def pipeline_melhorar_video(job_dir, job_id, start_time, factor):
 def pipeline_transcrever_arquivo(job_dir, job_id, start_time):
     """Pipeline robusto para o Card 7 (Transcrição)"""
     with active_jobs_lock:
-        if job_id in active_jobs: return
+        if len(active_jobs) >= MAX_CONCURRENT_JOBS:
+             logging.warning(f"❌ [HARDWARE] Limite de {MAX_CONCURRENT_JOBS} job(s) atingido. Ignorando {job_id}.")
+             return
         active_jobs.add(job_id)
     try:
         set_low_process_priority()
@@ -6359,6 +6595,7 @@ if __name__ == "__main__":
     # ----------------------
 
     check_ffmpeg()
+    check_lm_studio() # [NEW] Alerta sobre o estado do cérebro IA
     host, port = "127.0.0.1", 5000 # Porta padrão 5000
     url = f"http://{host}:{port}"
     
