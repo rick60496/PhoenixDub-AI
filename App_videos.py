@@ -41,8 +41,8 @@ from sklearn.cluster import AgglomerativeClustering # [NEW] v10 Diarization
 from scipy.spatial.distance import cdist # [NEW] v10 Diarization
 
 # --- CONFIGURAÇÕES DE AMBIENTE (OFFLINE-FIRST) ---
-os.environ["HF_HUB_OFFLINE"] = "1"        # [v12.0] Proíbe qualquer tentativa de conexão do Hugging Face Hub
-os.environ["TRANSFORMERS_OFFLINE"] = "1"  # [v12.0] Proíbe qualquer tentativa de conexão do Transformers
+os.environ["HF_HUB_OFFLINE"] = "0"        # [FIX] Permitir download inicial de modelos
+os.environ["TRANSFORMERS_OFFLINE"] = "0"  # [FIX] Permitir download inicial de modelos
 os.environ["SPEECHBRAIN_FETCH_STRATEGY"] = "COPY"
 os.environ["COQUI_TOS_AGREED"] = "1"
 
@@ -280,11 +280,8 @@ try:
             return ['soundfile'] # Mock simples para satisfazer o SpeechBrain
         torchaudio.list_audio_backends = _list_audio_backends
     
-    # [FIX] Força uso do backend soundfile para evitar erro de TorchCodec
-    try:
-        torchaudio.set_audio_backend("soundfile")
-    except:
-        pass
+    # [FIX] Força uso do backend soundfile - REMOVIDO para evitar warning depreciado
+    pass
 except ImportError:
     pass
 
@@ -1514,7 +1511,13 @@ def gema_etapa_1_traducao(original_text, video_context="", speaker_name="Voz", p
     TARGET_TEXT: "{original_text}"
     
     [FORMATO OBRIGATÓRIO]:
-    "Tradução" | Explicação Curta
+    Responda APENAS com a tradução entre aspas duplas.
+    Exemplo: "Sua tradução aqui!"
+    
+    [PROIBIDO]:
+    1. PROIBIDO repetir o texto original.
+    2. PROIBIDO explicações ou comentários extra.
+    3. PROIBIDO usar setas (->).
     """
     
     payload = {
@@ -1785,7 +1788,15 @@ def gema_etapa_2_sincronizacao(original_text, translated_text, duration_seconds,
     Contexto: {context[:200]}
     
     [FORMATO OBRIGATÓRIO]:
-    "Tradução Adaptada" | Explicação Curta
+    Responda apenas com a lista de opções numeradas entre aspas.
+    Exemplo:
+    1. "Opção extra curta"
+    2. "Opção mais natural"
+    
+    [PROIBIDO]:
+    1. PROIBIDO explicações ou comentários.
+    2. PROIBIDO repetir o inglês original.
+    3. PROIBIDO usar setas (->).
     
     RESPOSTA DEFINITIVA:
     """

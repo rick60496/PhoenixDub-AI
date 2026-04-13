@@ -1,4 +1,5 @@
 ffmpeg-python
+packaging>=24.0
 flask
 flask-cors
 faster-whisper==1.2.1
@@ -6,8 +7,8 @@ pydub
 requests
 psutil
 --extra-index-url https://download.pytorch.org/whl/cu121
-torch==2.6.0+cu121
-torchaudio==2.6.0+cu121
+torch==2.5.1+cu121
+torchaudio==2.5.1+cu121
 onnxruntime-gpu
 # Peças do Motor CUDA (NVIDIA) - Padrão 2026 / CUDA 12
 nvidia-cuda-runtime-cu12
@@ -26,9 +27,9 @@ tqdm
 g2p-en
 unidecode
 phonemizer==3.2.1
-huggingface_hub[hf_xet]>=0.23.0,<1.0.0
+huggingface_hub<0.25.0
 openunmix==1.3.0
-transformers==4.40.0
+transformers==4.44.0
 speechbrain==1.1.0
 scikit-learn
 # Chatterbox Multilingual (Resemble AI) - Padrão 2026

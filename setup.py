@@ -60,12 +60,27 @@ def check_espeak_ng():
         
     print("\n" + "!"*65)
     print(" ⚠️ ALERTA: eSpeak-NG NÃO ENCONTRADO! ⚠️")
-    print(" O Chatterbox exige o eSpeak-NG para converter texto em voz.")
-    print(" Baixe e instale o 'espeak-ng-X64.msi' em:")
-    print(" https://github.com/espeak-ng/espeak-ng/releases")
-    print(" Após instalar, você pode continuar a instalação.")
-    print("!"*65)
-    input(" Pressione Enter para CONTINUAR mesmo assim (ou instale e reinicie)...")
+    print(" O Chatterbox exige o eSpeak-NG para funcionar.")
+    print("-" * 65)
+    
+    choice = input(" [?] Deseja tentar a INSTALAÇÃO AUTOMÁTICA via winget? (s/n): ").strip().lower()
+    
+    if choice == 's':
+        print("\n[+] Iniciando instalação do eSpeak-NG via winget...")
+        print("[!] Uma janela de permissão do Windows (UAC) pode aparecer.")
+        try:
+            subprocess.run(["winget", "install", "eSpeak-NG.eSpeak-NG", "--accept-source-agreements", "--accept-package-agreements"], check=True, shell=True)
+            print("[+] Instalação concluída com sucesso!")
+            return True
+        except Exception as e:
+            print(f"❌ Falha na instalação automática: {e}")
+            print(" Por favor, instale manualmente o 'espeak-ng-X64.msi' em:")
+            print(" https://github.com/espeak-ng/espeak-ng/releases")
+    else:
+        print("\n[!] Instalação manual necessária.")
+        print(" Baixe o MSI em: https://github.com/espeak-ng/espeak-ng/releases")
+    
+    input("\n Pressione Enter para CONTINUAR após a instalação...")
     return False
 
 def accept_conda_tos():
@@ -82,6 +97,75 @@ def accept_conda_tos():
                            shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except:
             pass
+
+def download_onnx_model():
+    """Baixa o modelo Chatterbox ONNX automaticamente do Hugging Face."""
+    target_dir = os.path.join(BASE_DIR, "models", "chatterbox_onnx")
+    tokenizer_check = os.path.join(target_dir, "tokenizer.json")
+    
+    if os.path.exists(tokenizer_check):
+        print("\n[+] Motor ONNX já encontrado em 'models/chatterbox_onnx/'. Pulando download.")
+        return
+
+    print("\n" + "*"*65)
+    print(" 🧬 BAIXANDO MOTOR DE IA ACELERADO (ONNX - v2026) 🧬")
+    print(" Isso vai garantir a performance máxima na sua RTX.")
+    print("⏳ Download de aprox. 2GB iniciado... Por favor, aguarde.")
+    print("*"*65)
+    
+    try:
+        # Tenta usar o python do ambiente para baixar (pois já tem huggingface-hub)
+        python_exe = os.path.join(ENV_PATH, "python.exe")
+        repo_id = "onnx-community/chatterbox-multilingual-ONNX"
+        
+        # [FIX] Desativa o acelerador Rust que causa erro de Hardware em algumas CPUs
+        env_vars = os.environ.copy()
+        env_vars["HF_HUB_DISABLE_FAST_HF_TRANSFER"] = "1"
+        
+        # Script inline para usar o snapshot_download
+        cmd = f'"{python_exe}" -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id=\'{repo_id}\', local_dir=\'{target_dir}\', local_dir_use_symlinks=False)"'
+        subprocess.run(cmd, shell=True, check=True, env=env_vars)
+        print("\n✅ Motor ONNX baixado e configurado com sucesso!")
+    except Exception as e:
+        print(f"\n⚠️ Falha no download automático do ONNX: {e}")
+        print(" [!] O erro fatal de hardware foi contornado, mas o download falhou por outro motivo.")
+        print(" O programa ainda funcionará no modo padrão (PyTorch).")
+        print(" Você pode baixar manualmente em: https://huggingface.co/onnx-community/chatterbox-multilingual-ONNX")
+
+def pre_install_fix():
+    """Corrige problemas de packaging e pip antes da instalação pesada."""
+    print("\n[+] Aplicando Correções de Base (Pip, Packaging, Wheel)...")
+    python_exe = os.path.join(ENV_PATH, "python.exe")
+    trusted_flags = "--trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host download.pytorch.org"
+    try:
+        run_cmd(f'"{python_exe}" -m pip install --upgrade pip setuptools wheel packaging {trusted_flags}')
+    except:
+        pass
+
+def repair_env(has_gpu_selected=True):
+    """Repara um ambiente existente instalando apenas o que falta."""
+    print("\n" + "="*65)
+    print(" 🛠️  MODO REPARO RÁPIDO ATIVADO 🛠️ ")
+    print("="*65)
+    
+    pre_install_fix()
+    
+    req_file = "requirements_RTX.txt" if has_gpu_selected else "requirements_CPU.txt"
+    trusted_flags = "--trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host download.pytorch.org"
+    python_exe = os.path.join(ENV_PATH, "python.exe")
+    
+    print(f"\n[+] Atualizando dependências de: {req_file}")
+    run_cmd(f'"{python_exe}" -m pip install -r {req_file} {trusted_flags}')
+    
+    print("\n[+] Re-instalando Motor de Voz (Chatterbox)...")
+    chatterbox_cmd = f'"{python_exe}" -m pip install git+https://github.com/resemble-ai/chatterbox.git --no-deps {trusted_flags}'
+    run_cmd(chatterbox_cmd)
+    
+    if has_gpu_selected:
+        download_onnx_model()
+        
+    print("\n✅ REPARO CONCLUÍDO COM SUCESSO!")
+    print(" Agora o programa deve abrir sem os erros anteriores.")
 
 def install_env(has_gpu_selected=True):
     check_git() # Verificação proativa do Git
@@ -108,17 +192,20 @@ def install_env(has_gpu_selected=True):
         # Força Python 3.10 para evitar conflitos conhecidos
         run_cmd(f"conda create --prefix {ENV_PATH} python=3.10 -y")
         
+        # [FIX] Aplica correções de base antes de mais nada
+        pre_install_fix()
+        
         print("\n[+] Instalando Ferramentas de Base (FFmpeg & TK)...")
         run_cmd(f"conda install --prefix {ENV_PATH} ffmpeg tk -y")
         
         print("\n[+] Liberando comandos de Login (HuggingFace)...")
         # Instala uma versão compatível com transformers 4.40 (< 1.0.0)
         trusted_flags = "--trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host download.pytorch.org"
-        run_cmd(f'"{ENV_PATH}\\python.exe" -m pip install "huggingface-hub<1.0.0" --upgrade {trusted_flags}')
+        run_cmd(f'"{ENV_PATH}\\python.exe" -m pip install "huggingface-hub<0.25.0" --upgrade {trusted_flags}')
         
         print("\n" + "*"*65)
         print(" 🔑 AGORA VOCÊ PODE FAZER O LOGIN! 🔑")
-        print(" O comando 'huggingface-cli login' já está disponível.")
+        print(" O comando 'huggingface-cli login' já estará disponível.")
         print("*"*65)
 
         print(f"\n[+] ✨ INSTALANDO CÉREBRO DE IA (Versão 2026 Modern) ✨")
@@ -130,6 +217,10 @@ def install_env(has_gpu_selected=True):
         print("\n[+] 🔊 Finalizando: Instalando Motor de Voz (Chatterbox v0.1.7)...")
         chatterbox_cmd = f'"{ENV_PATH}\\python.exe" -m pip install git+https://github.com/resemble-ai/chatterbox.git --no-deps {trusted_flags}'
         run_cmd(chatterbox_cmd)
+
+        if has_gpu_selected:
+            # Baixa o modelo ONNX automaticamente para Modo Turbo
+            download_onnx_model()
         
         print("\n" + "="*65)
         print("🤖 FASE FINAL: CONFIGURAÇÃO DO GEMA 4 (LM STUDIO) 🤖")
@@ -164,6 +255,28 @@ def delete_env():
     except Exception as e:
         print(f"❌ Erro ao deletar: {e}")
 
+def hf_login():
+    """Executa o login do HuggingFace de dentro do ambiente virtual."""
+    # Procura scripts tanto em /bin quanto em /Scripts (Windows)
+    hf_cli = os.path.join(ENV_PATH, "Scripts", "huggingface-cli.exe")
+    if not os.path.exists(hf_cli):
+        print("\n❌ ERRO: O ambiente ainda não foi instalado ou o hf-cli sumiu.")
+        input("\nPressione Enter para voltar...")
+        return
+        
+    print("\n" + "="*65)
+    print(" 🔑 LOGIN HUGGINGFACE 🔑")
+    print(" 1. Acesse: https://huggingface.co/settings/tokens")
+    print(" 2. Crie um token (tipo READ) e copie.")
+    print(" 3. Cole o token abaixo (não aparecerá nada ao colar, é normal).")
+    print("="*65)
+    try:
+        subprocess.run(f'"{hf_cli}" login', shell=True)
+        print("\n✅ Login processado!")
+    except Exception as e:
+        print(f"❌ Erro ao tentar login: {e}")
+    input("\nPressione Enter para voltar ao menu...")
+
 def main():
     check_conda()
     # Detecta GPU apenas uma vez para performance
@@ -172,7 +285,6 @@ def main():
 
     while True:
         # Limpa o console para o menu ficar sempre organizado
-        # No Windows usamos 'cls', no Linux/Mac 'clear'
         os.system('cls' if os.name == 'nt' else 'clear')
         
         print_header()
@@ -180,48 +292,64 @@ def main():
         print("-" * 35)
         print("  [ 1 ] 🚀 Instalar MODO TURBO (Para quem tem Placa RTX)")
         print("  [ 2 ] 🏠 Instalar MODO PADRÃO (Para o meu PC / CPU)")
-        print("  [ 3 ] 📖 Ver Instruções do LM Studio")
-        print("  [ 4 ] ❌ Desinstalar Ambiente (Apagar do HD)")
-        print("  [ 5 ] 🚪 Sair")
+        print("  [ 3 ] 🔑 Fazer Login no HuggingFace")
+        print("  [ 4 ] 📖 Ver Instruções do LM Studio")
+        print("  [ 5 ] ❌ Desinstalar Ambiente (Apagar do HD)")
+        print("  [ 6 ] 🚪 Sair")
         
-        choice = input("\n👉 Escolha uma opção (1-5): ").strip()
+        choice = input("\n👉 Escolha uma opção (1-6): ").strip()
         
         if not choice:
             continue
 
         if choice == '1':
             if os.path.exists(ENV_PATH):
-                conf = input("\n⚠️ O ambiente já existe. Deseja re-instalar? (s/n): ").strip().lower()
-                if conf == 's':
+                print("\n⚠️ O ambiente já existe.")
+                print("  [ 1 ] Re-instalar DO ZERO (Lento, apaga tudo)")
+                print("  [ 2 ] REPARO RÁPIDO (Conserta erros e falta de arquivos)")
+                print("  [ 3 ] Cancelar")
+                sub_choice = input("\n👉 Escolha uma opção (1-3): ").strip()
+                if sub_choice == '1':
                     delete_env()
                     install_env(has_gpu_selected=True)
+                elif sub_choice == '2':
+                    repair_env(has_gpu_selected=True)
             else:
                 install_env(has_gpu_selected=True)
-            break
+            input("\nPressione Enter para continuar...")
         elif choice == '2':
             if os.path.exists(ENV_PATH):
-                conf = input("\n⚠️ O ambiente já existe. Deseja re-instalar? (s/n): ").strip().lower()
-                if conf == 's':
+                print("\n⚠️ O ambiente já existe.")
+                print("  [ 1 ] Re-instalar DO ZERO (Lento, apaga tudo)")
+                print("  [ 2 ] REPARO RÁPIDO (Conserta erros e falta de arquivos)")
+                print("  [ 3 ] Cancelar")
+                sub_choice = input("\n👉 Escolha uma opção (1-3): ").strip()
+                if sub_choice == '1':
                     delete_env()
                     install_env(has_gpu_selected=False)
+                elif sub_choice == '2':
+                    repair_env(has_gpu_selected=False)
             else:
                 install_env(has_gpu_selected=False)
-            break
+            input("\nPressione Enter para continuar...")
         elif choice == '3':
-            print("\n- URL: http://localhost:1234\n- Modelo: gemma-4-E4B-it-Q4_K_M.gguf")
-            input("\nEnter para voltar...")
+            hf_login()
         elif choice == '4':
-            conf = input("\n⚠️ Tem certeza que deseja apagar? (s/n): ").strip().lower()
+            print("\n- URL: http://localhost:1234\n- Modelo Recomendado: gemma-4-E4B-it-GGUF")
+            print("- Vá em 'Local Server' e ative 'Start Server'.")
+            input("\nPressione Enter para voltar...")
+        elif choice == '5':
+            conf = input("\n⚠️ Tem certeza que deseja apagar o ambiente? (s/n): ").strip().lower()
             if conf == 's':
                 delete_env()
-            break
-        elif choice == '5':
-            print("Até logo!")
+                input("\nAmbiente removido. Pressione Enter...")
+        elif choice == '6':
+            print("\nSaindo... Use 'conda activate " + ENV_PATH + "' para rodar o app.")
             break
         else:
-            print(f"\n❌ Opção '{choice}' inválida. Tente novamente.")
+            print(f"\n❌ Opção '{choice}' inválida.")
             import time
-            time.sleep(1.5)
+            time.sleep(1)
 
 if __name__ == "__main__":
     main()

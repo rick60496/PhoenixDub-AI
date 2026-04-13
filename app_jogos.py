@@ -49,8 +49,8 @@ except ImportError:
 from pydub.silence import split_on_silence
 
 # --- CONFIGURAÇÕES DE AMBIENTE (OFFLINE-FIRST) ---
-os.environ["HF_HUB_OFFLINE"] = "1"        # [v12.0] Proíbe qualquer tentativa de conexão do Hugging Face Hub (Diarização)
-os.environ["TRANSFORMERS_OFFLINE"] = "1"  # [v12.0] Proíbe qualquer tentativa de conexão do Transformers
+os.environ["HF_HUB_OFFLINE"] = "0"        # [FIX] Permitir download inicial de modelos
+os.environ["TRANSFORMERS_OFFLINE"] = "0"  # [FIX] Permitir download inicial de modelos
 os.environ["SPEECHBRAIN_FETCH_STRATEGY"] = "COPY"
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["COQUI_TOS_AGREED"] = "1"
@@ -2078,19 +2078,30 @@ def gema_batch_processor_v2(batch, cenario_ctx, glossary={}, profile_id='padrao'
     )
 
     prompt = f"""<|system|>
-VOCÊ É UM DIRETOR DE DUBLAGEM DE ELITE...
-id: [A]: "Texto Fiel" | [B]: "Texto Brasil & Sincronia"
+VOCÊ É UM DIRETOR DE DUBLAGEM DE ELITE. Sua missão é traduzir frases de jogos para o Português do Brasil (PT-BR) respeitando o tempo de fala.
 
-[LISTA DE FRASES PARA CASTING]:
+[REGRAS DE OURO - PROIBIDO]:
+1. PROIBIDO conversar com o usuário ou dar explicações.
+2. PROIBIDO usar setas como "->" ou "=>".
+3. PROIBIDO REPETIR O TEXTO ORIGINAL EM INGLÊS NA RESPOSTA.
+4. PROIBIDO o formato "Inglês -> Português". Responda APENAS com a tradução.
+
+[FORMATO OBRIGATÓRIO]:
+NOME_DO_ID: [A]: "Versão Fiel" | [B]: "Versão Adaptada"
+
+[EXEMPLO CORRETO]:
+missao_01: [A]: "Solte os alvos!" | [B]: "Derrube esses caras!"
+
+[LISTA DE FRASES PARA TRADUZIR]:
 """
     for item in batch:
         prompt += f"- {item['id']}: \"{item.get('original_text', '')}\" (Limite: {item.get('duration', 0):.2f}s)\n"
 
-    prompt += "\n[AVISO]: USE APENAS O FORMATO 'id: [A]: \"...\" | [B]: \"...\"'"
-    
+    prompt += "\nRESPOSTA APENAS EM PORTUGUÊS. NÃO REPITA O ORIGINAL."
+
     payload = {
         "messages": [
-            {"role": "system", "content": "<|think|>\nVocê é um motor de LOCALIZAÇÃO. Responda apenas a lista final formatada. Proibido conversar."},
+            {"role": "system", "content": "<|think|>\nVocê é um motor de LOCALIZAÇÃO PURA. Responda APENAS a lista no formato ID: [A]: \"...\" | [B]: \"...\". Proibido qualquer texto extra ou explicações. JAMAIS repita o texto em inglês."},
             {"role": "user", "content": prompt}
         ], 
         "temperature": 0.1, "max_tokens": 2048
@@ -2109,15 +2120,38 @@ id: [A]: "Texto Fiel" | [B]: "Texto Brasil & Sincronia"
             except: pass
 
         results = {}
-        # Regex v18.5: Captura IDs mesmo se houver números (1.), espaços ou traços extras
-        # Usa lookahead positivo flexível para encontrar o próximo ID
-        matches = re.finditer(r'(?:^|\n)[ \t]*(?:[0-9]+\.?[ \t]*)?([a-zA-Z0-9_\-\.]+)\s*[:\-=>]+\s*"?\s*(.*?)\s*"?(?=\n[ \t]*(?:[0-9]+\.?[ \t]*)?[a-zA-Z0-9_\-\.]+\s*[:\-=>]+|$)', content, re.DOTALL)
+        # Regex v19.0: Ultra-robusta contra alucinações de prefixos (id:, 1., etc)
+        # Suporta: "id: meu_id:", "1. meu_id:", "meu_id ->", etc.
+        item_pattern = r'(?:^|\n)[ \t]*(?:[0-9]+\.?[ \t]*)?(?:id\s*[:\-]\s*)?([a-zA-Z0-9_\-\.]+)\s*[:\-=>]+\s*"?\s*(.*?)\s*"?(?=\n[ \t]*(?:[0-9]+\.?[ \t]*)?(?:id\s*[:\-]\s*)?[a-zA-Z0-9_\-\.]+\s*[:\-=>]+|$)'
+        matches = re.finditer(item_pattern, content, re.DOTALL)
         
         for match in matches:
             clean_id = match.group(1).strip().lower()
             val = match.group(2).strip()
+            
+            # [v19.5 TRAVA DE PUREZA]
+            # Se a IA alucinou o formato "Original -> Tradução", pega apenas a parte final
+            for sep in [" -> ", " => ", " : "]:
+                if sep in val:
+                    parts = val.split(sep)
+                    val = parts[-1].strip() # Pega o último elemento (a tradução)
+            
             if val.startswith('"') and val.endswith('"'): val = val[1:-1]
             results[clean_id] = val
+
+        # [v19.0 FALLBACK DE EMERGÊNCIA]
+        # Se a regex principal falhar (Gema mudou o formato drasticamente), 
+        # tenta buscar os IDs originais do lote diretamente no texto.
+        if not results and content.strip():
+            logging.info("   -> 🦎 [PARSER] Regex principal falhou. Tentando captura de emergência por IDs diretos...")
+            for item in batch:
+                f_id = item['id']
+                # Busca o ID seguido de qualquer separador e captura até o fim da linha ou próximo ID
+                escaped_id = re.escape(f_id)
+                emergency_pattern = rf'{escaped_id}\s*[:\-=>]+\s*(.*?)(?=\n|$)'
+                m_emergency = re.search(emergency_pattern, content, re.IGNORECASE)
+                if m_emergency:
+                    results[f_id.lower()] = m_emergency.group(1).strip().strip('"')
             
         elapsed_time = time.time() - start_time
         if not results and elapsed_time < 5.0:
@@ -2217,8 +2251,17 @@ def gema_batch_corrector_master(failed_items, cenario_ctx, profile_id='padrao', 
     lore_text = profile.get("lore", "Gênero: Jogo de Aventura/Ação")
     
     prompt = f"""<|system|>
-VOCÊ É UM DIRETOR DE DUBLAGEM EXPERIENTE. Corrija a lista abaixo:
-id: "Tradução ajustada e natural aqui!"
+VOCÊ É UM CORRETOR DE DUBLAGEM SÊNIOR. Sua missão é ajustar traduções que falharam na qualidade ou sincronia.
+
+[REGRAS CRÍTICAS]:
+1. Responda APENAS a lista no formato id: "Tradução Corrigida"
+2. PROIBIDO repetir o inglês original.
+3. PROIBIDO explicações ou comentários.
+4. Use APENAS aspas duplas: "..."
+5. NUNCA use setas (->).
+
+[EXEMPLO]:
+id_01: "Essa é a versão limpa e corrigida!"
 
 [LORE]: {lore_text} | Contexto: {cenario_ctx}
 """
@@ -2228,7 +2271,7 @@ id: "Tradução ajustada e natural aqui!"
     try:
         payload = {
             "messages": [
-                {"role": "system", "content": "<|think|>\nVocê é um Corretor de Dublagem. Responda apenas a lista corrigida entre aspas. Proibido conversar."},
+                {"role": "system", "content": "<|think|>\nVocê é um Corretor de Dublagem. Responda apenas o ID e o texto entre aspas. Proibido conversar."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.2, "max_tokens": 2048
@@ -2245,9 +2288,10 @@ id: "Tradução ajustada e natural aqui!"
                     f.write(f"\n--- CORRETOR {datetime.now()} ---\n{content}\n")
             except: pass
 
-        # Extrator Robusto Master (Mesmo do Batch)
+        # Extrator Robusto Master (Mesmo do Batch v19.0)
         results = {}
-        matches = re.finditer(r'(?:^|\n)[ \t]*(?:[0-9]+\.?[ \t]*)?([a-zA-Z0-9_\-\.]+)\s*[:\-=>]+\s*"?\s*(.*?)\s*"?(?=\n[ \t]*(?:[0-9]+\.?[ \t]*)?[a-zA-Z0-9_\-\.]+\s*[:\-=>]+|$)', content, re.DOTALL)
+        item_pattern = r'(?:^|\n)[ \t]*(?:[0-9]+\.?[ \t]*)?(?:id\s*[:\-]\s*)?([a-zA-Z0-9_\-\.]+)\s*[:\-=>]+\s*"?\s*(.*?)\s*"?(?=\n[ \t]*(?:[0-9]+\.?[ \t]*)?(?:id\s*[:\-]\s*)?[a-zA-Z0-9_\-\.]+\s*[:\-=>]+|$)'
+        matches = re.finditer(item_pattern, content, re.DOTALL)
         
         for match in matches:
             clean_id = match.group(1).strip().lower()
@@ -2347,22 +2391,16 @@ def gema_supervisor_lqa_batch_review(batch_with_durations, cenario_ctx, profile_
     is_action = any(x in lore_text.lower() or x in cenario_ctx.lower() or x in profile_id.lower() for x in keywords)
     prot_dir = "3. MILITAR: Verifique Callsigns (Spectre, Reaper). PROIBIDO 'fantasma' para veículos. REPROVE frases sem sentido tático." if is_action else "3. NATURALIDADE SOCIAL: Foque na fluidez do diálogo para o gênero."
 
-    prompt = f"""<|system|>
-VOCÊ É UM DIRETOR DE DUBLAGEM. Sua missão é escolher a opção que soe mais NATURAL e PROFISSIONAL.
-
-[CRITÉRIOS]:
-1. RITMO: Se for 'URGENTE', prefira opções curtas e impactantes. Se 'NARRATIVO', prefira fluidez.
-2. NATURALIDADE: A opção escolhida deve parecer um diálogo real de filme/jogo dublado profissionalmente.
-3. SEMÂNTICA: Verifique se o sentido original foi preservado.
-{prot_dir}
-4. SINCRONIA: Respeite rigorosamente os 18 CPS.
-
-[VIBE DO LOTE]: {lobe_vibe} | [CONTEXTO]: {cenario_ctx}
+[MISSÃO]: Escolha a melhor opção (A ou B) que esteja APENAS EM PORTUGUÊS.
+SE UMA OPÇÃO REPETIR O INGLÊS ORIGINAL, REPROVE-A IMEDIATAMENTE.
+Resposta apenas no formato: id: A ou id: B ou id: REPROVADO
 
 [LISTA PARA CURADORIA]:
 """
     for f_id, data in batch_with_durations.items():
         orig = data.get('original', '')
+        text = data.get('text', '')
+        prompt += f"- {f_id}: (EN: \"{orig}\") -> Resposta IA: \"{text}\"\n"
         dur = data.get('duration', 0)
         options = data.get('text', '') # Aqui virá o A e B bruto
         prompt += f"- {f_id}: \"{orig}\" (Duração: {dur:.2f}s) -> Candidatos: {options}\n"
@@ -3349,6 +3387,14 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                             # [v15.1 PARSEADOR ROBUSTO]
                             # Tenta separar A e B de qualquer forma (com ou sem prefixos)
                             raw_candidates = resultados_lote[fid]
+                            
+                            # [v19.5 SMART CLEANER]
+                            # Limpa ecos de inglês "Original -> Tradução" antes de quebrar em A/B
+                            if " -> " in raw_candidates:
+                                raw_candidates = raw_candidates.split(" -> ")[-1].strip()
+                            elif " => " in raw_candidates:
+                                raw_candidates = raw_candidates.split(" => ")[-1].strip()
+                                
                             opt_a, opt_b = raw_candidates, raw_candidates
                             
                             if " | " in raw_candidates:
@@ -3360,8 +3406,10 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                                 opt_a = re.sub(r'^\[?A\]?:?\s*', '', opt_a).strip().strip('"')
                                 opt_b = re.sub(r'^\[?B\]?:?\s*', '', opt_b).strip().strip('"')
                             
-                            candidates_map[fid] = {"A": opt_a, "B": opt_b}
-                            
+                            # [DOUBLE CHECK] Remove aspas extras do Gema se ele repetir o símbolo
+                            opt_a = opt_a.strip('"')
+                            opt_b = opt_b.strip('"')
+                                
                             candidates_map[fid] = {"A": opt_a, "B": opt_b}
                             review_data[fid] = {
                                 "original": fd.get('original_text', ''),
