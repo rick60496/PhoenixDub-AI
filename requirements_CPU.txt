@@ -5,17 +5,10 @@ faster-whisper==1.2.1
 pydub
 requests
 psutil
---extra-index-url https://download.pytorch.org/whl/cu121
-torch==2.6.0+cu121
-torchaudio==2.6.0+cu121
-onnxruntime-gpu
-# Peças do Motor CUDA (NVIDIA) - Padrão 2026 / CUDA 12
-nvidia-cuda-runtime-cu12
-nvidia-cublas-cu12
-nvidia-cudnn-cu12
-nvidia-curand-cu12
-nvidia-cusolver-cu12
-nvidia-cusparse-cu12
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.6.0+cpu
+torchaudio==2.6.0+cpu
+onnxruntime
 numpy<2.0.0,>=1.24.0
 scipy
 pyyaml

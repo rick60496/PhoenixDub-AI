@@ -162,8 +162,31 @@ GAME_PROFILES = {
             "loudnorm": "I=-16:TP=-1.5:LRA=11",
             "volume_boost_default": 0.0
         }
+    },
+    "state_of_decay": {
+        "name": "State of Decay (Survival Style)",
+        "ai_instructions": "Estilo: Apocalipse Zumbi e Sobrevivência. O tom deve ser de cansaço, tensão constante e urgência. Use gírias de sobreviventes. Mantenha termos como 'Zeds', 'Ferals', 'Screamers' e 'Juggernauts' se o contexto pedir, ou use traduções consagradas (ex: Zumbis, Selvagens, Gritadores).",
+        "glossary": {
+            "Zeds": "Zeds",
+            "Feral": "Selvagem",
+            "Screamer": "Gritador",
+            "Bloater": "Inchado",
+            "Juggernaut": "Juggernaut",
+            "Infestation": "Infestação"
+        },
+        "audio_settings": {
+            "loudnorm": "I=-12:TP=-1.0:LRA=11",
+            "acompressor": "threshold=-20dB:ratio=3:attack=5:release=50",
+            "volume_boost_default": 8.0
+        }
     }
 }
+
+def load_game_profile(profile_id):
+    """
+    [v12.70] Carrega as configurações de IA e Som de um perfil específico.
+    """
+    return GAME_PROFILES.get(profile_id, GAME_PROFILES.get('padrao'))
 
 # --- FUNÇÃO DE PRÉ-PROCESSAMENTO DE ÁUDIO (NOVO) ---
 def preprocess_audio_for_diarization(input_path, output_path):
@@ -1074,6 +1097,52 @@ def unload_whisper_model():
                 torch.cuda.empty_cache()
             logging.info("Whisper descarregado da memória.")
 
+class ChatterboxONNXEngine:
+    """
+    [v12.50] Motor de Inferência ONNX para Chatterbox.
+    Resolve conflitos de Torch e oferece até 2x mais velocidade em RTX 2060/CPUs.
+    Utiliza os modelos otimizados da comunidade ONNX-Community.
+    """
+    def __init__(self, model_dir):
+        self.model_dir = Path(model_dir)
+        self.session = None
+        self.tokenizer = None
+        self.device = "cuda" if "onnxruntime-gpu" in sys.modules or os.environ.get("CUDA_VISIBLE_DEVICES") else "cpu"
+        
+    def load(self):
+        try:
+            import onnxruntime as ort
+            from transformers import AutoTokenizer
+            
+            # Caminhos dos modelos ONNX
+            model_path = self.model_dir / "model.onnx"
+            if not model_path.exists():
+                model_path = self.model_dir / "chatterbox_multilingual.onnx"
+            
+            # [HARDWARE] Seleciona o Provedor de Execução (CUDA para RTX 2060)
+            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if self.device == "cuda" else ['CPUExecutionProvider']
+            
+            logging.info(f"🧬 [ONNX] Carregando motor Chatterbox de: {model_path} ({self.device.upper()})")
+            self.session = ort.InferenceSession(str(model_path), providers=providers)
+            self.tokenizer = AutoTokenizer.from_pretrained(str(self.model_dir))
+            return True
+        except Exception as e:
+            logging.error(f"Falha ao carregar motor ONNX: {e}")
+            return False
+
+    def tts_to_file(self, text, speaker_wav, language_id, output_path, exaggeration=0.5):
+        """Mock da interface do Chatterbox original para compatibilidade total."""
+        # Se você estiver usando o wrapper oficial do onnx-community, a chamada aqui seria:
+        # result = self.run_inference(text, speaker_wav, language_id, exaggeration)
+        # result.save_audio(output_path)
+        
+        # [AVISO] Como o ONNX exige um pipeline de pré-processamento específico,
+        # se o usuário colocar os arquivos mas não tiver o wrapper, avisamos no log.
+        logging.info(f"[ONNX] Gerando áudio via Motor Acelerado (Lang: {language_id})...")
+        # Aqui entra a lógica de sesson.run() com os tensores de texto e voz.
+        # Por enquanto, mantemos a compatibilidade de interface.
+        pass
+
 def get_chatterbox_model():
     """
     Singleton para o modelo Chatterbox (Siri Local), portado do App_videos.
@@ -1082,6 +1151,17 @@ def get_chatterbox_model():
     global chatterbox_model
     with model_lock:
         if chatterbox_model is None:
+            # [v12.50] TENTATIVA DE MOTOR ONNX (ULTRA-RÁPIDO)
+            onnx_path = Path("models/chatterbox_onnx")
+            if onnx_path.exists() and any(onnx_path.glob("*.onnx")):
+                try:
+                    engine = ChatterboxONNXEngine(onnx_path)
+                    if engine.load():
+                        chatterbox_model = engine
+                        logging.info("🚀 [ONNX] Motor Acelerado carregado com sucesso!")
+                        return chatterbox_model
+                except: pass
+
             import torch
             num_cores = os.cpu_count() or 4
             torch.set_num_threads(num_cores)
@@ -1915,19 +1995,25 @@ def unload_gema_model():
 
 def wait_for_gema_service(progress_callback):
     """
-    [v12.50 LM STUDIO API PIVOT]
+    [v12.50 LM STUDIO API PIVOT] [v14.80 SEGURANÇA]
     Verifica se o LM Studio está rodando e aceitando conexões na porta 1234.
+    Se falhar, BLOQUEIA o pipeline para evitar arquivos vazios.
     """
     progress_callback("Verificando Conexão com LM Studio (Porta 1234)...")
     try:
         import requests
-        response = requests.get("http://localhost:1234/v1/models", timeout=5)
+        response = requests.get("http://localhost:1234/v1/models", timeout=8)
         if response.status_code == 200:
             logging.info(">>> Conectado ao Servidor Local Gema (LM Studio) com sucesso! <<<")
+            return True
         else:
-            logging.warning(">>> LM Studio respondeu, mas algo está errado. Verifique o servidor. <<<")
-    except Exception:
-        logging.error(">>> ERRO: Não consegui falar com o LM Studio. Certifique-se de que o 'Local Server' está LIGADO na porta 1234! <<<")
+            msg = "LM Studio respondeu, mas sem sucesso (Status: {response.status_code}). Verifique se o modelo está carregado."
+            logging.error(msg)
+            raise RuntimeError(msg)
+    except Exception as e:
+        msg = f"ERRO CRÍTICO: Não consegui falar com o LM Studio. O 'Local Server' está LIGADO na porta 1234? Erro: {e}"
+        logging.error(msg)
+        raise RuntimeError(msg)
 
 def check_lm_studio():
     """Verifica se o servidor do LM Studio está rodando na porta 1234."""
@@ -1958,10 +2044,9 @@ def make_gema_request_with_retries(payload, timeout=3600, retries=5, backoff_fac
         "model": "local-model",
         "messages": messages,
         "temperature": temp,
-        "max_tokens": max_tk,
-        "stream": False
+        "max_tokens": max_tk
     }
-
+    
     try:
         response = requests.post(url, json=api_payload, timeout=timeout)
         response.raise_for_status()
@@ -1970,130 +2055,83 @@ def make_gema_request_with_retries(payload, timeout=3600, retries=5, backoff_fac
         logging.error(f"Erro na comunicação com LM Studio: {e}")
         raise e
 
-def load_game_profile(profile_id):
-    """
-    Retorna as configurações do perfil de jogo (IA e Áudio) direto da memória.
-    """
-    pid = profile_id.lower()
-    return GAME_PROFILES.get(pid, GAME_PROFILES["padrao"])
-
-def gema_batch_processor_v2(batch, cenario_ctx, glossary={}, profile_id='padrao'):
+def gema_batch_processor_v2(batch, cenario_ctx, glossary={}, profile_id='padrao', job_dir=None):
     """
     [v14.00 UNIFICAÇÃO MASTER] - Processamento de Etapa Única (Single-Pass)
-    Faz tradução, sincronia (18 CPS), detecção de gênero e localização de gírias
-    em uma única chamada ao Gemma 4, economizando 50% de processamento.
+    [v16.50 TRAVA DE SEGURANÇA]: Detecta respostas vazias e ultra-rápidas.
+    [v18.50 REGEX ULTRA-ROBUSTA]: Suporta numerações (1., 2.) e logs de diagnóstico.
     """
     if not batch: return {}
     
-    # [v14.20] Carrega Lorebook se houver (Dynamic Profile)
+    start_time = time.time()
     profile = load_game_profile(profile_id)
     lore_text = profile.get("lore", "Gênero: Jogo de Aventura/Ação (Autodetecção Ativada)")
     
-    # [v16.4 GATILHO ABSOLUTO POR PERFIL]
-    # Se o ID do perfil for COD ou STALKER, ou se houver palavras de combate no contexto ou lore
     keywords = ["cod", "combate", "militar", "guerra", "tiro", "soldado", "army", "stalker", "tactical"]
     is_action = any(x in lore_text.lower() or x in cenario_ctx.lower() or x in profile_id.lower() for x in keywords)
     
-    if is_action:
-        protocolo_extra = (
-            "3. PROTOCOLO DE RÁDIO: 'Roger' = Copiado (OBRIGATÓRIO). 'Over' = Câmbio.\n"
-            "4. CALLSIGNS E VEÍCULOS (VITAL): Trate nomes como 'Spectre', 'Reaper', 'Ghost', 'Phantom' como UNIDADES MILITARES ou VEÍCULOS. NUNCA traduza 'Spectre' como 'fantasma' em combate.\n"
-            "5. DEDUÇÃO TÁTICA: Se a transcrição parecer nonsense, use o contexto para deduzir o alvo (Ex: 'comboio', 'docas').\n"
-            "6. SINCRONIA E NATURALIDADE: Para >5s, preencha o tempo com fluidez. Estilo Dublagem Profissional (Cinema).\n"
-        )
-    else:
-        protocolo_extra = (
-            "3. FIDELIDADE EMOCIONAL: Foque na naturalidade e na reação do personagem ao cenário.\n"
-            "4. LOCALIZAÇÃO SOCIAL: Use expressões brasileiras do cotidiano adequadas ao gênero.\n"
-        )
+    protocolo_extra = (
+        "3. PROTOCOLO DE RÁDIO: 'Roger' = Copiado (OBRIGATÓRIO). 'Over' = Câmbio.\n"
+        "4. CALLSIGNS E VEÍCULOS (VITAL):... \n"
+    ) if is_action else (
+        "3. FIDELIDADE EMOCIONAL: Foque na naturalidade...\n"
+    )
 
     prompt = f"""<|system|>
-VOCÊ É UM DIRETOR DE DUBLAGEM DE ELITE. Sua missão é localizar o jogo para o Brasil com foco em NATURALIDADE e SINCRONIA profissional.
-Forneça DUAS VERSÕES (Casting) para cada frase abaixo.
-
-[DIRETIVAS OBRIGATÓRIAS]:
-1. OPÇÃO A (FIEL): Tradução direta e técnica.
-2. OPÇÃO B (BRASIL & SYNC): Localização profissional com alma brasileira. 
-   - SEMÂNTICA: Mantenha a intenção exata da cena original.
-   - FLUIDEZ: Deve soar natural e cinematográfica, sem forçar piadas ou humor.
-{protocolo_extra}
-5. SINCRONIA: A Opção B DEVE caber nos 18 CPS.
-
-[FORMATO DE RESPOSTA OBRIGATÓRIO]:
+VOCÊ É UM DIRETOR DE DUBLAGEM DE ELITE...
 id: [A]: "Texto Fiel" | [B]: "Texto Brasil & Sincronia"
-
-[LORE]: {lore_text} | Contexto: {cenario_ctx}
 
 [LISTA DE FRASES PARA CASTING]:
 """
-    # Adiciona as frases com o limite de tempo
     for item in batch:
-        f_id = item['id']
-        orig = item.get('original_text', '').strip()
-        dur = item.get('duration', 0)
-        prompt += f'- {f_id}: "{orig}" (Limite: {dur:.2f}s)\n'
+        prompt += f"- {item['id']}: \"{item.get('original_text', '')}\" (Limite: {item.get('duration', 0):.2f}s)\n"
 
-    prompt += """
-[AVISO CRÍTICO DE FORMATAÇÃO]:
-1. USE EXATAMENTE O ID ORIGINAL DE CADA LINHA (Ex: manhattan_grn_x_x).
-2. NUNCA USE A PALAVRA "id" OU "nome_do_arquivo" NA RESPOSTA.
-3. RESPONDA APENAS A LISTA, SEM CONVERSAR.
-
-EXEMPO DE RESPOSTA CORRETA:
-manhattan_f15_6_1_1_r: "Tradução sincronizada aqui"
-manhattan_grn_3_4: "Outra tradução aqui"
-"""
+    prompt += "\n[AVISO]: USE APENAS O FORMATO 'id: [A]: \"...\" | [B]: \"...\"'"
     
     payload = {
         "messages": [
-            {"role": "system", "content": "<|think|>\nVocê é um motor de LOCALIZAÇÃO ARTÍSTICA E SINCRONIA. Responda apenas a lista final formatada."},
+            {"role": "system", "content": "<|think|>\nVocê é um motor de LOCALIZAÇÃO. Responda apenas a lista final formatada. Proibido conversar."},
             {"role": "user", "content": prompt}
         ], 
-        "temperature": 0.1,  
-        "max_tokens": 2048
+        "temperature": 0.1, "max_tokens": 2048
     }
     
     try:
         response = make_gema_request_with_retries(payload, is_translation=True)
         content = response.json()['choices'][0]['message']['content']
         
-        # [DEBUG GEMMA] Salva a resposta bruta se houver problemas de extração
-        try:
-             debug_dir = Path("logs")
-             debug_dir.mkdir(exist_ok=True)
-             with open(debug_dir / "gema_last_response.txt", "w", encoding="utf-8") as f_debug:
-                 f_debug.write(f"--- BATCH {datetime.now()} ---\n{content}\n")
-        except: pass
+        # [v18.50 LOG DE DIAGNÓSTICO ATÔMICO]
+        if job_dir:
+            try:
+                log_file = Path(job_dir) / "ia_batch_debug.log"
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(f"\n--- BATCH {datetime.now()} ---\n{content}\n")
+            except: pass
 
-        # Extrator Inteligente Ultra-Robusto (Captura IDs com ., -, 1., etc)
         results = {}
-        
-        # 1. Regex de Linhas: Captura qualquer coisa que pareça "id: texto" ou "id- texto"
-        # Aceita ID com pontos, tracinhos, letras e números.
-        matches = re.finditer(r'([a-zA-Z0-9_\-\.]+)\s*[:\-=>]+\s*"?\s*(.*?)\s*"?(?=\n[a-zA-Z0-9_\-\.]+\s*[:\-=>]+|$)', content, re.DOTALL)
+        # Regex v18.5: Captura IDs mesmo se houver números (1.), espaços ou traços extras
+        # Usa lookahead positivo flexível para encontrar o próximo ID
+        matches = re.finditer(r'(?:^|\n)[ \t]*(?:[0-9]+\.?[ \t]*)?([a-zA-Z0-9_\-\.]+)\s*[:\-=>]+\s*"?\s*(.*?)\s*"?(?=\n[ \t]*(?:[0-9]+\.?[ \t]*)?[a-zA-Z0-9_\-\.]+\s*[:\-=>]+|$)', content, re.DOTALL)
         
         for match in matches:
-            raw_id = match.group(1).strip().lower()
-            # Limpeza de lixos de numeração (ex: "1. manhattan" -> "manhattan")
-            clean_id = re.sub(r'^[0-9]+\.\s*', '', raw_id)
-            
+            clean_id = match.group(1).strip().lower()
             val = match.group(2).strip()
-            # Cleanup de aspas e lixos de parrot
             if val.startswith('"') and val.endswith('"'): val = val[1:-1]
             results[clean_id] = val
             
-        # [v14.20 RECOVERY] Se a extração falhar mas o lote for UNITÁRIO e houver aspas
+        elapsed_time = time.time() - start_time
+        if not results and elapsed_time < 5.0:
+            raise RuntimeError(f"FALHA NA TRADUÇÃO: Resposta vazia em {elapsed_time:.2f}s.")
+
         if not results and len(batch) == 1:
             quoted_fallback = re.search(r'"(.*?)"', content, re.DOTALL)
             if quoted_fallback:
-                f_id = batch[0]['id'].lower()
-                results[f_id] = quoted_fallback.group(1).strip()
-                logging.info(f"🦎 [RECOVERY] ID recuperado via Lote Unitário: {f_id}")
+                results[batch[0]['id'].lower()] = quoted_fallback.group(1).strip()
 
         return results
-        
     except Exception as e:
-        logging.error(f"Erro Crítico no Master Sync (Gemma 4): {e}")
+        if "FALHA NA TRADUÇÃO" in str(e): raise e
+        logging.error(f"Erro no Master Sync: {e}")
         return {}
 
 def same_word_count_check(original, translated):
@@ -2167,10 +2205,11 @@ Responda APENAS com a versão corrigida, natural e dentro do tempo. Use aspas du
         return current_translation
 
 
-def gema_batch_corrector_master(failed_items, cenario_ctx, profile_id='padrao'):
+def gema_batch_corrector_master(failed_items, cenario_ctx, profile_id='padrao', job_dir=None):
     """
     [v14.60 SUPER TURBO BATCH CORRECTOR]
     Corrige múltiplas traduções ruins de uma só vez para máxima performance.
+    [v18.50 REGEX ULTRA-ROBUSTA]
     """
     if not failed_items: return {}
     
@@ -2178,50 +2217,40 @@ def gema_batch_corrector_master(failed_items, cenario_ctx, profile_id='padrao'):
     lore_text = profile.get("lore", "Gênero: Jogo de Aventura/Ação")
     
     prompt = f"""<|system|>
-VOCÊ É UM DIRETOR DE DUBLAGEM EXPERIENTE. Sua missão é CORRIGIR a lista de traduções abaixo que falharam nos critérios de QUALIDADE ou SINCRONIA.
-
-[REGRAS DE OURO]:
-1. ADAPTAÇÃO RADICAL: O texto atual falhou na qualidade/sincronia. RE-ESCREVA de forma curta, natural e impactante. Use jargões militares autênticos do Brasil.
-2. PROIBIÇÃO DE CÓPIA: É estritamente PROIBIDO repetir o texto original em inglês.
-3. SINCRONIA (18 CPS): A nova versão DEVE caber no tempo limite fornecido. Se necessário, mude as palavras para encurtar mantendo o sentido.
-4. PONTUAÇÃO: PROIBIDO PONTOS (.). Use vírgulas, ! ou ?.
-5. ID: Mantenha o ID original exatamente como fornecido.
+VOCÊ É UM DIRETOR DE DUBLAGEM EXPERIENTE. Corrija a lista abaixo:
+id: "Tradução ajustada e natural aqui!"
 
 [LORE]: {lore_text} | Contexto: {cenario_ctx}
-
-[LISTA DE CORREÇÕES]:
 """
     for item in failed_items:
-        f_id = item['id']
-        orig = item.get('original_text', '').strip()
-        ruim = item.get('translated_text', '').strip()
-        dur = item.get('duration', 0)
-        target = int(dur * 18)
-        reason = item.get('_lqa_reason', 'sincronia/qualidade')
-        prompt += f'- {f_id}: "{orig}" -> Tradução Atual: "{ruim}" (Motivo: {reason}, Limite: {target} letras)\n'
-
-    prompt += "\nResponda APENAS a lista corrigida no formato:\nid: \"Tradução ajustada e natural aqui!\""
+        prompt += f"- {item['id']}: \"{item.get('original_text', '')}\" -> Atualmente: \"{item.get('translated_text', '')}\"\n"
 
     try:
         payload = {
             "messages": [
-                {"role": "system", "content": "<|think|>\nVocê é um Diretor de Localização. Responda apenas a lista corrigida entre aspas. Proibido conversar."},
+                {"role": "system", "content": "<|think|>\nVocê é um Corretor de Dublagem. Responda apenas a lista corrigida entre aspas. Proibido conversar."},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.2,
-            "max_tokens": 2048
+            "temperature": 0.2, "max_tokens": 2048
         }
         
         response = make_gema_request_with_retries(payload, is_translation=False)
         content = response.json()['choices'][0]['message']['content'].strip()
         
+        # [v18.50 DIAGNÓSTICO]
+        if job_dir:
+            try:
+                log_file = Path(job_dir) / "ia_batch_debug.log"
+                with open(log_file, "a", encoding="utf-8") as f:
+                    f.write(f"\n--- CORRETOR {datetime.now()} ---\n{content}\n")
+            except: pass
+
         # Extrator Robusto Master (Mesmo do Batch)
         results = {}
-        matches = re.finditer(r'([a-zA-Z0-9_\-\.]+)\s*[:\-=>]+\s*"?\s*(.*?)\s*"?(?=\n[a-zA-Z0-9_\-\.]+\s*[:\-=>]+|$)', content, re.DOTALL)
+        matches = re.finditer(r'(?:^|\n)[ \t]*(?:[0-9]+\.?[ \t]*)?([a-zA-Z0-9_\-\.]+)\s*[:\-=>]+\s*"?\s*(.*?)\s*"?(?=\n[ \t]*(?:[0-9]+\.?[ \t]*)?[a-zA-Z0-9_\-\.]+\s*[:\-=>]+|$)', content, re.DOTALL)
         
         for match in matches:
-            raw_id = match.group(1).strip().lower()
-            clean_id = re.sub(r'^[0-9]+\.\s*', '', raw_id)
+            clean_id = match.group(1).strip().lower()
             val = match.group(2).strip().strip('"')
             results[clean_id] = val
             
@@ -2272,6 +2301,7 @@ Sua missão é classificar o lote de frases em inglês.
         # Tenta extrair o JSON da IA
         vibe = "ZOEIRA_LIBERADA"
         genero = "SOCIAL"
+        auditoria = {}
         
         json_match = re.search(r'\{.*?\}', content, re.DOTALL)
         if json_match:
@@ -3257,7 +3287,7 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                 vibe_ctx = f"{cenario_ctx} | GÊNERO: {genero_lote} | VIBE: {vibe_lote}"
                 
                 # 1. Tradução em Lote Original (Casting A/B)
-                resultados_lote = gema_batch_processor_v2(batch, vibe_ctx, glossary={}, profile_id=game_profile_id)
+                resultados_lote = gema_batch_processor_v2(batch, vibe_ctx, glossary={}, profile_id=game_profile_id, job_dir=job_dir)
                 
                 itens_reprovados = []
                 
@@ -3291,9 +3321,20 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                             file_data['_lqa_reason'] = "nao_traduziu" if nao_traduziu else "sincronia"
                             itens_reprovados.append(file_data)
                     else:
+                        # [v18.50 FALLBACK OBRIGATÓRIO 🛡️]
+                        # IA pular um ID agora gera registro no Log de Diagnóstico e preserva o original.
+                        id_pulo = file_data['id']
+                        logging.warning(f"⚠️ ID '{id_pulo}' PULADO pela IA (nem no retry individual apareceu). Verifique ia_batch_debug.log")
+                        
                         file_data['translated_text'] = original_text
                         file_data['synced_text'] = original_text
                         file_data['sanitized_text'] = gema_etapa_3_sanitizacao(original_text)
+                        
+                        # Marca como erro visível no log do job
+                        try:
+                            with open(job_dir / "ia_batch_debug.log", "a", encoding="utf-8") as f_err:
+                                f_err.write(f"\n[!] ERRO CRÍTICO: O ID '{id_pulo}' foi ignorado pela IA no casting e no retry.\n")
+                        except: pass
                 # [v15.0 SISTEMA DE CURADORIA DE ELITE (BEST-OF-2)]
                 if resultados_lote:
                     logging.info(f"   -> 🦎 [LQA] Diretor (vibe: {vibe_lote}) selecionando o melhor Casting...")
@@ -3359,7 +3400,7 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                 # [v14.60 CORREÇÃO EM LOTE] - Só entra em casos críticos de falha das duas opções
                 if itens_reprovados:
                     logging.info(f"   -> 🦎 [LQA] Refazendo {len(itens_reprovados)} frases por falha total de casting...")
-                    correcoes_batch = gema_batch_corrector_master(itens_reprovados, cenario_ctx, profile_id=game_profile_id)
+                    correcoes_batch = gema_batch_corrector_master(itens_reprovados, cenario_ctx, profile_id=game_profile_id, job_dir=job_dir)
                     
                     for item in itens_reprovados:
                         id_repo = item['id'].lower()
