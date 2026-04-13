@@ -9,7 +9,7 @@ psutil
 torch==2.1.2+cu118
 torchaudio==2.1.2+cu118
 onnxruntime-gpu
-# Peças do Motor CUDA (NVIDIA) - Download resiliente via PIP
+# Bibliotecas de suporte NVIDIA
 nvidia-cuda-runtime-cu11
 nvidia-cublas-cu11
 nvidia-cudnn-cu11
@@ -33,6 +33,5 @@ speechbrain>=1.0.3
 scikit-learn
 chatterbox
 DeepFilterNet
-llama-cpp-python>=0.3.20
 vpk
 fsb5
