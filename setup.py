@@ -157,9 +157,11 @@ def repair_env(has_gpu_selected=True):
     print(f"\n[+] Atualizando dependências de: {req_file}")
     run_cmd(f'"{python_exe}" -m pip install -r {req_file} {trusted_flags}')
     
-    print("\n[+] Re-instalando Motor de Voz (Chatterbox)...")
-    chatterbox_cmd = f'"{python_exe}" -m pip install git+https://github.com/resemble-ai/chatterbox.git --no-deps {trusted_flags}'
-    run_cmd(chatterbox_cmd)
+    print("\n[+] Re-instalando Motor de Voz (Modo de Convivência)...")
+    # Forçamos a convivência pacífica dos pacotes que causam conflitos na internet
+    pkgs = "chatterbox-tts resemble-perth s3tokenizer diffusers==0.29.0 conformer==0.3.2 spacy-pkuseg pykakasi==2.3.0 pyloudnorm omegaconf gradio>=6.8.0 safetensors==0.7.0"
+    repair_cmd = f'"{python_exe}" -m pip install {pkgs} --force-reinstall --no-deps {trusted_flags}'
+    run_cmd(repair_cmd)
     
     if has_gpu_selected:
         download_onnx_model()
@@ -199,11 +201,18 @@ def install_env(has_gpu_selected=True):
         run_cmd(f"conda install --prefix {ENV_PATH} ffmpeg tk -y")
         
         print("\n[+] Liberando comandos de Login (HuggingFace)...")
-        # Instala uma versão compatível com transformers 4.40 (< 1.0.0)
+        # Instala uma versão compatível com transformers 4.46.3 (>= 1.0.0)
         trusted_flags = "--trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host download.pytorch.org"
-        run_cmd(f'"{ENV_PATH}\\python.exe" -m pip install "huggingface-hub<0.25.0" --upgrade {trusted_flags}')
+        run_cmd(f'"{ENV_PATH}\\python.exe" -m pip install "huggingface-hub==0.26.2" --upgrade {trusted_flags}')
         
-        print("\n" + "*"*65)
+        print("\n[+] Instalando Motor de Voz (Isolado)...")
+        pkgs = "chatterbox-tts resemble-perth s3tokenizer diffusers==0.29.0 conformer==0.3.2 spacy-pkuseg pykakasi==2.3.0 pyloudnorm omegaconf gradio>=6.8.0 safetensors==0.7.0 sentencepiece"
+        run_cmd(f'"{ENV_PATH}\\python.exe" -m pip install {pkgs} --no-deps {trusted_flags}')
+        
+        if has_gpu_selected:
+            download_onnx_model()
+            
+        print("\n" + "="*65)
         print(" 🔑 AGORA VOCÊ PODE FAZER O LOGIN! 🔑")
         print(" O comando 'huggingface-cli login' já estará disponível.")
         print("*"*65)
@@ -290,60 +299,49 @@ def main():
         print_header()
         print(f"  Detecção de Hardware: {status_gpu}")
         print("-" * 35)
-        print("  [ 1 ] 🚀 Instalar MODO TURBO (Para quem tem Placa RTX)")
-        print("  [ 2 ] 🏠 Instalar MODO PADRÃO (Para o meu PC / CPU)")
-        print("  [ 3 ] 🔑 Fazer Login no HuggingFace")
-        print("  [ 4 ] 📖 Ver Instruções do LM Studio")
-        print("  [ 5 ] ❌ Desinstalar Ambiente (Apagar do HD)")
-        print("  [ 6 ] 🚪 Sair")
+        print("  [ 1 ] ✅ REPARO RÁPIDO (Conserta erros e falta de arquivos)")
+        print("  [ 2 ] 🚀 Instalar NOVO Ambiente (MODO TURBO/RTX)")
+        print("  [ 3 ] 🏠 Instalar NOVO Ambiente (MODO PADRÃO/CPU)")
+        print("  [ 4 ] 🔑 Fazer Login no HuggingFace")
+        print("  [ 5 ] 📖 Ver Instruções do LM Studio")
+        print("  [ 6 ] ❌ Desinstalar Ambiente (Apagar do HD)")
+        print("  [ 7 ] 🚪 Sair")
         
-        choice = input("\n👉 Escolha uma opção (1-6): ").strip()
+        choice = input("\n👉 Escolha uma opção (1-7): ").strip()
         
         if not choice:
             continue
 
         if choice == '1':
-            if os.path.exists(ENV_PATH):
-                print("\n⚠️ O ambiente já existe.")
-                print("  [ 1 ] Re-instalar DO ZERO (Lento, apaga tudo)")
-                print("  [ 2 ] REPARO RÁPIDO (Conserta erros e falta de arquivos)")
-                print("  [ 3 ] Cancelar")
-                sub_choice = input("\n👉 Escolha uma opção (1-3): ").strip()
-                if sub_choice == '1':
-                    delete_env()
-                    install_env(has_gpu_selected=True)
-                elif sub_choice == '2':
-                    repair_env(has_gpu_selected=True)
+            if not os.path.exists(ENV_PATH):
+                print("\n❌ ERRO: Ambiente não encontrado. Instale primeiro (Opção 2 ou 3).")
             else:
-                install_env(has_gpu_selected=True)
+                repair_env(has_gpu_selected=has_gpu)
             input("\nPressione Enter para continuar...")
         elif choice == '2':
             if os.path.exists(ENV_PATH):
-                print("\n⚠️ O ambiente já existe.")
-                print("  [ 1 ] Re-instalar DO ZERO (Lento, apaga tudo)")
-                print("  [ 2 ] REPARO RÁPIDO (Conserta erros e falta de arquivos)")
-                print("  [ 3 ] Cancelar")
-                sub_choice = input("\n👉 Escolha uma opção (1-3): ").strip()
-                if sub_choice == '1':
-                    delete_env()
-                    install_env(has_gpu_selected=False)
-                elif sub_choice == '2':
-                    repair_env(has_gpu_selected=False)
+                print("\n⚠️ O ambiente já existe. Use o REPARO (Opção 1) ou Apague (Opção 6) primeiro.")
+            else:
+                install_env(has_gpu_selected=True)
+            input("\nPressione Enter para continuar...")
+        elif choice == '3':
+            if os.path.exists(ENV_PATH):
+                print("\n⚠️ O ambiente já existe. Use o REPARO (Opção 1) ou Apague (Opção 6) primeiro.")
             else:
                 install_env(has_gpu_selected=False)
             input("\nPressione Enter para continuar...")
-        elif choice == '3':
-            hf_login()
         elif choice == '4':
+            hf_login()
+        elif choice == '5':
             print("\n- URL: http://localhost:1234\n- Modelo Recomendado: gemma-4-E4B-it-GGUF")
             print("- Vá em 'Local Server' e ative 'Start Server'.")
             input("\nPressione Enter para voltar...")
-        elif choice == '5':
+        elif choice == '6':
             conf = input("\n⚠️ Tem certeza que deseja apagar o ambiente? (s/n): ").strip().lower()
             if conf == 's':
                 delete_env()
                 input("\nAmbiente removido. Pressione Enter...")
-        elif choice == '6':
+        elif choice == '7':
             print("\nSaindo... Use 'conda activate " + ENV_PATH + "' para rodar o app.")
             break
         else:
