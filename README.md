@@ -161,4 +161,9 @@ PhoenixDub features two independent engines:
 | **Error 1234 (Connection Refused)** | LM Studio "Start Server" is not toggled on. |
 
 ---
+
+## 🎖️ Créditos e Agradecimentos
+Para conhecer todas as pessoas e tecnologias envolvidas no PhoenixDub, veja o arquivo [CREDITS.md](CREDITS.md).
+
+---
 *Developed with ❤️ by Paulo Henrik Carvalho de Araújo.*
