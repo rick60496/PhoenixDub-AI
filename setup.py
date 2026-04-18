@@ -16,11 +16,15 @@ def run_cmd(cmd):
     subprocess.run(cmd, check=True, shell=True)
 
 def check_nvidia_gpu():
-    """Detecta se existe uma placa NVIDIA no sistema para ativar CUDA."""
+    """Detecta se existe uma placa NVIDIA com pelo menos 4GB de VRAM."""
     try:
-        res = subprocess.run(["nvidia-smi"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        # Pergunta o total de memória da GPU em MB
+        cmd = "nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits"
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True, text=True)
         if res.returncode == 0:
-            return True
+            vram = int(res.stdout.strip())
+            if vram >= 4000: # Exige no mínimo 4GB para o Modo Turbo
+                return True
     except:
         pass
     return False
@@ -132,13 +136,43 @@ def download_onnx_model():
         print(" O programa ainda funcionará no modo padrão (PyTorch).")
         print(" Você pode baixar manualmente em: https://huggingface.co/onnx-community/chatterbox-multilingual-ONNX")
 
+def download_chatterbox_official():
+    """Baixa o modelo Chatterbox Padrão/Oficial automaticamente do Hugging Face."""
+    target_dir = os.path.join(ENV_PATH, "models", "chatterbox_official")
+    
+    # Se existe algum arquivo lá (ex: config.json or pytorch_model.bin), já pulamos
+    if os.path.exists(target_dir) and len(os.listdir(target_dir)) > 2:
+        print("\n[+] Vozes Oficiais já encontradas em 'env/models/chatterbox_official/'. Pulando download.")
+        return
+
+    print("\n" + "*"*65)
+    print(" 🔊 BAIXANDO VOZES OFICIAIS DO CHATTERBOX 🔊")
+    print(" Isso vai baixar os arquivos de dublagem necessários.")
+    print("⏳ Por favor, aguarde...")
+    print("*"*65)
+    
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+        python_exe = os.path.join(ENV_PATH, "python.exe")
+        repo_id = "ResembleAI/chatterbox"
+        
+        env_vars = os.environ.copy()
+        env_vars["HF_HUB_DISABLE_FAST_HF_TRANSFER"] = "1"
+        
+        cmd = f'"{python_exe}" -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id=\'{repo_id}\', local_dir=r\'{target_dir}\', local_dir_use_symlinks=False)"'
+        subprocess.run(cmd, shell=True, check=True, env=env_vars)
+        print("\n✅ Vozes oficiais do Chatterbox baixadas com sucesso!")
+    except Exception as e:
+        print(f"\n⚠️ Falha no download automático do Chatterbox Oficial: {e}")
+        print(f" Você terá que baixar ou copiar a pasta manualmente para: {target_dir}")
+
 def pre_install_fix():
     """Corrige problemas de packaging e pip antes da instalação pesada."""
     print("\n[+] Aplicando Correções de Base (Pip, Packaging, Wheel)...")
     python_exe = os.path.join(ENV_PATH, "python.exe")
     trusted_flags = "--trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host download.pytorch.org"
     try:
-        run_cmd(f'"{python_exe}" -m pip install --upgrade pip setuptools wheel packaging {trusted_flags}')
+        run_cmd(f'"{python_exe}" -m pip install --upgrade pip setuptools wheel {trusted_flags}')
     except:
         pass
 
@@ -156,18 +190,26 @@ def repair_env(has_gpu_selected=True):
     
     print(f"\n[+] Atualizando dependências de: {req_file}")
     run_cmd(f'"{python_exe}" -m pip install -r {req_file} {trusted_flags}')
+
+    # [BYPASS] Motor de IA via LM Studio (Evita erros de compilação no PC do colega)
+    print("\n[+] Configurando ponte para LM Studio (Gemma 4)...")
+
+    # [FIX 2026] Trava do Numpy para evitar quebra de áudio e adição do Numba
+    print("\n[+] Aplicando trava de compatibilidade (Numpy + Numba)...")
+    run_cmd(f'"{python_exe}" -m pip install "numpy<2.0.0" numba')
     
     print("\n[+] Re-instalando Motor de Voz (Modo de Convivência)...")
     # Forçamos a convivência pacífica dos pacotes que causam conflitos na internet
-    pkgs = "chatterbox-tts resemble-perth s3tokenizer diffusers==0.29.0 conformer==0.3.2 spacy-pkuseg pykakasi==2.3.0 pyloudnorm omegaconf gradio>=6.8.0 safetensors==0.7.0"
+    pkgs = "chatterbox-tts resemble-perth s3tokenizer diffusers==0.29.0 conformer==0.3.2 spacy-pkuseg pykakasi==2.3.0 pyloudnorm omegaconf safetensors==0.7.0"
     repair_cmd = f'"{python_exe}" -m pip install {pkgs} --force-reinstall --no-deps {trusted_flags}'
     run_cmd(repair_cmd)
     
+    download_chatterbox_official()
     if has_gpu_selected:
         download_onnx_model()
         
     print("\n✅ REPARO CONCLUÍDO COM SUCESSO!")
-    print(" Agora o programa deve abrir sem os erros anteriores.")
+    print(" O ambiente está atualizado e pronto para o Gemma 4.")
 
 def install_env(has_gpu_selected=True):
     check_git() # Verificação proativa do Git
@@ -203,10 +245,10 @@ def install_env(has_gpu_selected=True):
         print("\n[+] Liberando comandos de Login (HuggingFace)...")
         # Instala uma versão compatível com transformers 4.46.3 (>= 1.0.0)
         trusted_flags = "--trusted-host pypi.org --trusted-host files.pythonhosted.org --trusted-host download.pytorch.org"
-        run_cmd(f'"{ENV_PATH}\\python.exe" -m pip install "huggingface-hub==0.26.2" --upgrade {trusted_flags}')
+        run_cmd(f'"{ENV_PATH}\\python.exe" -m pip install huggingface-hub --upgrade {trusted_flags}')
         
         print("\n[+] Instalando Motor de Voz (Isolado)...")
-        pkgs = "chatterbox-tts resemble-perth s3tokenizer diffusers==0.29.0 conformer==0.3.2 spacy-pkuseg pykakasi==2.3.0 pyloudnorm omegaconf gradio>=6.8.0 safetensors==0.7.0 sentencepiece"
+        pkgs = "chatterbox-tts resemble-perth s3tokenizer diffusers==0.29.0 conformer==0.3.2 spacy-pkuseg pykakasi==2.3.0 pyloudnorm omegaconf safetensors==0.7.0 sentencepiece"
         run_cmd(f'"{ENV_PATH}\\python.exe" -m pip install {pkgs} --no-deps {trusted_flags}')
         
         if has_gpu_selected:
@@ -227,6 +269,7 @@ def install_env(has_gpu_selected=True):
         chatterbox_cmd = f'"{ENV_PATH}\\python.exe" -m pip install git+https://github.com/resemble-ai/chatterbox.git --no-deps {trusted_flags}'
         run_cmd(chatterbox_cmd)
 
+        download_chatterbox_official()
         if has_gpu_selected:
             # Baixa o modelo ONNX automaticamente para Modo Turbo
             download_onnx_model()

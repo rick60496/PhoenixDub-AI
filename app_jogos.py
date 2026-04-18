@@ -12,21 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import requests
+import json
+import logging
+import random
+import re
 import os
 import sys
 import time
 import subprocess
-import logging
-import json
 import threading
+import torch
+import gc
 import traceback
 from pathlib import Path
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock, Timer, Thread
 import hashlib
 import shutil
-import gc # [NEW] Gerenciamento de Memória
-import torch # [NEW] Para limpeza agressiva
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import zipfile # [NOVO] Para upload de lotes grandes
 import re
@@ -47,6 +51,13 @@ except ImportError:
     print("[AVISO] flask_cors não instalado. O painel web pode ter problemas de acesso se rodar em portas diferentes.")
     print("Para corrigir, use: pip install flask-cors")
 from pydub.silence import split_on_silence
+
+try:
+    from llama_cpp import Llama
+    HAS_LLAMA_CPP = True
+except ImportError:
+    HAS_LLAMA_CPP = False
+    logging.warning("llama-cpp-python não instalado. O sistema usará LM Studio para IA.")
 
 # --- GLOSSÁRIO FONÉTICO GLOBAL ---
 PHONETIC_CORRECTIONS = {}
@@ -136,6 +147,49 @@ except ImportError as e:
     logging.critical(f"Erro: Dependência essencial não encontrada - {e}.")
     logging.critical("Certifique-se de que todas as dependências estão instaladas corretamente.")
     sys.exit(1)
+
+# --- [v12.75] VERIFICAÇÃO DE DEPENDÊNCIAS CRÍTICAS ---
+def check_ffmpeg():
+    """Tenta localizar o FFmpeg Full (com suporte a MP3/Lame)."""
+    # [v2026 FIX] Prioridade total para a pasta local onde o usuário deve colocar o Full
+    local_full_bin = os.path.join(os.getcwd(), 'env', 'Library', 'bin', 'ffmpeg.exe')
+    
+    if os.path.exists(local_full_bin):
+        logging.info(f"FFmpeg FULL detectado na pasta local: {local_full_bin}")
+        os.environ["PATH"] = os.path.dirname(local_full_bin) + os.pathsep + os.environ["PATH"]
+        return True
+
+    try:
+        # Verifica se o ffmpeg do PATH tem suporte a libmp3lame
+        output = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, shell=True)
+        if 'libmp3lame' in output.stdout:
+            logging.info("FFmpeg (Full c/ MP3) encontrado no PATH.")
+            return True
+        else:
+            logging.warning("⚠️ FFmpeg do PATH não tem suporte a MP3 (libmp3lame).")
+    except:
+        pass
+
+    logging.error("❌ ERRO CRÍTICO: FFmpeg FULL não encontrado!")
+    print("\n" + "!"*60)
+    print("ERRO: Sua versão do FFmpeg é limitada e não suporta MP3.")
+    print("Para resolver:")
+    print("1. Baixe o 'FFmpeg Full' no Gyan.dev")
+    print("2. Extraia o ffmpeg.exe para: env\\Library\\bin\\")
+    print("Siga o manual: MANUAL_FFMPEG_FULL.md")
+    print("!"*60 + "\n")
+    return False
+
+def check_lm_studio():
+    """Verifica se o modelo GGUF local existe, já que não usamos mais o LM Studio externo."""
+    model_path = Path("./Models/gemma-4-E4B-it-Q4_K_M.gguf")
+    if model_path.exists():
+        logging.info(f"Cérebro IA (Gemma 4) detectado localmente: {model_path}")
+        return True
+    else:
+        logging.warning(f"⚠️ AVISO: Modelo GGUF não encontrado em {model_path}")
+        logging.warning("O 'Cérebro IA' (Gema Local) não funcionará. Coloque o arquivo .gguf na pasta Models.")
+        return False
 
 # --- [v12.70] DICIONÁRIO DE PERFIS DE JOGO (IA + ÁUDIO) ---
 # Adicione novos jogos aqui para otimizar Tradução, Glossário e Som.
@@ -1211,6 +1265,29 @@ def unload_whisper_model():
 # O motor ONNX foi removido para priorizar a qualidade de estúdio do modelo oficial.
 
 
+def get_optimal_device():
+    import logging
+    import torch
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        try:
+            device_idx = torch.cuda.current_device()
+            # Pega memória livre e total em bytes
+            free_m, total_m = torch.cuda.mem_get_info()
+            free_vram_gb = free_m / (1024**3)
+            total_vram_gb = total_m / (1024**3)
+
+            # TRAVA INTELIGENTE: Menos de 1.5GB indica LLM rodando na VRAM
+            if free_vram_gb < 1.5:
+                logging.warning(f"⚠️ [VRAM] Apenas {free_vram_gb:.1f}GB livres de {total_vram_gb:.1f}GB.")
+                logging.warning("O Gemma 4 no LM Studio parece estar usando a GPU. Forçando CPU!")
+                return "cpu"
+            
+            if total_vram_gb >= 3.5:
+                logging.info(f"🚀 [HARDWARE] Placa NVIDIA detectada e LIVRE ({free_vram_gb:.1f}GB disp.).")
+                return f"cuda:{device_idx}"
+        except Exception as e:
+            logging.warning(f"⚠️ Erro ao checar VRAM: {e}. Usando CPU.")
+    return "cpu"
 
 def get_chatterbox_model():
     """
@@ -1222,10 +1299,21 @@ def get_chatterbox_model():
         if chatterbox_model is None:
             official_path = Path("env/models/chatterbox_official")
             
-            if not official_path.exists():
-                logging.error("❌ Erro: Pasta 'env/models/chatterbox_official' não encontrada.")
-                logging.info("Por favor, certifique-se de que o download do modelo oficial foi concluído.")
-                return None
+            import os
+            # Checa se não existe ou se está vazia
+            if not official_path.exists() or len(os.listdir(official_path)) < 2:
+                logging.info("⏳ Modelo Chatterbox ausente. Iniciando download automático via HuggingFace (isso pode demorar uns minutinhos)...")
+                try:
+                    os.environ["HF_HUB_DISABLE_FAST_HF_TRANSFER"] = "1"
+                    from huggingface_hub import snapshot_download
+                    official_path.mkdir(parents=True, exist_ok=True)
+                    snapshot_download(repo_id="ResembleAI/chatterbox", local_dir=str(official_path), local_dir_use_symlinks=False)
+                    logging.info("✅ Download do Chatterbox concluído!")
+                except Exception as dl_err:
+                    logging.error(f"❌ Erro ao baixar modelo Chatterbox (Link Invalido?): {dl_err}")
+                    import shutil
+                    shutil.rmtree(str(official_path), ignore_errors=True)
+                    return None
 
             try:
                 import torch
@@ -1237,21 +1325,35 @@ def get_chatterbox_model():
                 # Criamos um protetor que gera submódulos infinitos para o SpeechBrain não reclamar.
                 # [v22.90] REFINED RECURSIVE MOCK: Blindagem com Compatibilidade
                 # Criamos um protetor inteligente que só finge existir o que for necessário.
+                # [v23.50] ULTIMATE LAZY BLOCKER: Previne falhas de 'LazyModule' no SpeechBrain
+                # Algumas bibliotecas tentam carregar módulos pesadores (k2, k2_fsa) no meio do processo.
+                # Esse Mock avançado intercepta essas tentativas e devolve 'nada' com sucesso.
                 class DeepMock(ModuleType):
                     def __getattr__(self, name):
-                        # Se for um atributo interno (__file__, __path__, etc), deixa o Python lidar.
-                        if name.startswith('__'): 
-                            return None
-                        full_name = f"{self.__name__}.{name}"
-                        if full_name not in sys.modules:
-                            sys.modules[full_name] = DeepMock(full_name)
-                        return sys.modules[full_name]
+                        if name.startswith('__'): return None
+                        fn = f"{self.__name__}.{name}"
+                        if fn not in sys.modules: sys.modules[fn] = DeepMock(fn)
+                        return sys.modules[fn]
                     def __call__(self, *args, **kwargs): return None
+                    def __bool__(self): return False
                     def __repr__(self): return f"<DeepMock {self.__name__}>"
 
-                # Protegemos toda a árvore de integrações de uma vez só
-                if 'speechbrain.integrations' not in sys.modules:
-                    sys.modules['speechbrain.integrations'] = DeepMock('speechbrain.integrations')
+                # 1. Detecta se vamos usar CPU ou GPU (já com a trava do LM Studio)
+                device = get_optimal_device()
+
+                # 2. Só bloqueia a NVIDIA se o dispositivo escolhido for CPU
+                # [v23.50] ULTIMATE LAZY BLOCKER: Previne falhas de 'LazyModule' no SpeechBrain
+                bad_libs = [
+                    'speechbrain.integrations', 'speechbrain.integrations.k2_fsa', 
+                    'speechbrain.integrations.huggingface', 'speechbrain.integrations.huggingface.wordemb',
+                    'speechbrain.integrations.nlp', 'speechbrain.integrations.ctc',
+                    'k2', 'k2_fsa'
+                ]
+                if device == "cpu":
+                    bad_libs.extend(['nvidia', 'nvidia.cudnn'])
+                
+                for lib in bad_libs:
+                    sys.modules[lib] = DeepMock(lib)
                 
                 # Forçamos a limpeza de memória das etapas anteriores
                 gc.collect()
@@ -1261,10 +1363,11 @@ def get_chatterbox_model():
                 try:
                     import perth
                     if not hasattr(perth, 'PerthImplicitWatermarker') or perth.PerthImplicitWatermarker is None:
-                        logging.warning("⚠️ Detectado conflito no Perth Watermarker. Aplicando Patch de Bypass...")
                         class DummyWatermarker: 
-                            def __call__(self, *args, **kwargs): return None
                             def __init__(self, *args, **kwargs): pass
+                            def __call__(self, *args, **kwargs): return self
+                            def apply_watermark(self, audio, *args, **kwargs): return audio
+                            def get_watermarker(self, *args, **kwargs): return self
                         perth.PerthImplicitWatermarker = DummyWatermarker
                 except: pass
 
@@ -1280,11 +1383,17 @@ def get_chatterbox_model():
                 torch.backends.mkldnn.enabled = True
                 
                 logging.info(f"Usando {num_cores} núcleos para geração (1 núcleo livre para o sistema).")
-                raw_model = ChatterboxMultilingualTTS.from_local(str(official_path), device="cpu")
+                
+                logging.info(f"Iniciando Motor Chatterbox em: {device}")
+                raw_model = ChatterboxMultilingualTTS.from_local(str(official_path), device=device)
                 
                 class OfficialEngineWrapper:
                     def __init__(self, model): 
                         self.model = model
+                        import torch
+                        torch.set_grad_enabled(False) # [CPU OPTIMIZATION] Desativa gradiente globalmente na inferência
+                    
+                    @torch.no_grad() # [CPU OPTIMIZATION] Bloqueador de Autograd para Pytorch
                     def generate(self, text, language_id, audio_prompt_path, **kwargs):
                         # Ajuste fonético apenas para palavras críticas que o oficial erra
                         text_fix = re.sub(r"\btorre\b", "tôr-re", text, flags=re.IGNORECASE)
@@ -1298,17 +1407,19 @@ def get_chatterbox_model():
                         text_fix = text_fix.strip()
                         
                         # Parâmetros Dinâmicos (Vem lá da Etapa 6)
-                        return self.model.generate(
-                            text_fix, 
-                            language_id=language_id, 
-                            audio_prompt_path=audio_prompt_path,
-                            exaggeration=kwargs.get('exaggeration', 1.05),
-                            cfg_weight=kwargs.get('cfg_weight', 0.5),
-                            temperature=kwargs.get('temperature', 0.7),
-                            top_p=kwargs.get('top_p', 0.9),
-                            min_p=kwargs.get('min_p', 0.1),
-                            repetition_penalty=kwargs.get('repetition_penalty', 1.2)
-                        )
+                        import torch
+                        with torch.no_grad(): # Garantia dupla
+                            return self.model.generate(
+                                text_fix, 
+                                language_id=language_id, 
+                                audio_prompt_path=audio_prompt_path,
+                                exaggeration=kwargs.get('exaggeration', 1.05),
+                                cfg_weight=kwargs.get('cfg_weight', 0.5),
+                                temperature=kwargs.get('temperature', 0.7),
+                                top_p=kwargs.get('top_p', 0.9),
+                                min_p=kwargs.get('min_p', 0.1),
+                                repetition_penalty=kwargs.get('repetition_penalty', 1.2)
+                            )
                     def to(self, device): return self 
                 
                 chatterbox_model = OfficialEngineWrapper(raw_model)
@@ -2118,60 +2229,143 @@ gema_lock = Lock()
 
 def get_gema_model():
     """
-    [v12.50 LM STUDIO API PIVOT]
-    Como o Gemma 4 é muito novo para a biblioteca local, agora usamos o LM Studio como Host.
-    Retorna apenas um sinalizador 'LM_STUDIO'.
+    [v22.55 DIAGNÓSTICO]
+    Inicializa e carrega o GGUF com verificações extras de hardware.
     """
-    return "LM_STUDIO"
+    global gema_instance
+    with gema_lock:
+        if gema_instance is None:
+            # Verificação de segurança para o motor local
+            if not HAS_LLAMA_CPP:
+                logging.warning("Motor local indisponível. Continuando via API...")
+                return None
+            import torch
+            import os
+            
+            # Detecta Hardware
+            gpu_layers = -1 if torch.cuda.is_available() else 0
+            model_path_abs = str(Path(__file__).parent / "Models" / "gemma-4-E4B-it-Q4_K_M.gguf")
+            
+            if not os.path.exists(model_path_abs):
+                 logging.error(f"❌ MODELO NÃO ENCONTRADO: {model_path_abs}")
+                 return None
+
+            # Diagnóstico de arquivo
+            file_size_gb = os.path.getsize(model_path_abs) / (1024**3)
+            logging.info(f"📂 Verificando arquivo GGUF: {file_size_gb:.2f} GB")
+            
+            if file_size_gb < 1.0:
+                logging.error("❌ ERRO: O arquivo do modelo parece estar corrompido (muito pequeno).")
+                return None
+
+            logging.info(f"🚀 Iniciando carregamento (Modo Seguro)...")
+            try:
+                if not HAS_LLAMA_CPP: return None
+                gema_instance = Llama(
+                    model_path=model_path_abs,
+                    n_ctx=4096, 
+                    n_threads=2,
+                    n_gpu_layers=gpu_layers,
+                    verbose=False
+                )
+                logging.info("✅ Gema Local carregada com sucesso!")
+            except Exception as e:
+                logging.warning(f"⚠️ O motor local não suporta este modelo específico (Erro: {e})")
+                logging.info("💡 Sugestão: Abra este modelo no LM Studio e o programa usará ele como ponte automaticamente!")
+                gema_instance = None
+    return gema_instance
+
+def gema_inference(prompt, system_prompt="Você é um tradutor profissional.", model_type="gema"):
+    """
+    [v22.60 INDESTRUTÍVEL] 
+    Tenta Local GGUF -> Se falhar ou não existir, tenta LM Studio (Porta 5000 ou 1234)
+    """
+    # 1. Tenta Local (Llama-cpp)
+    local_gema = get_gema_model()
+    if local_gema:
+        try:
+            response = local_gema.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3
+            )
+            return response['choices'][0]['message']['content']
+        except Exception as e:
+            logging.error(f"Erro na geração nativa (llama.cpp): {e}")
+
+    # 2. Se falhar o local, tenta o LM Studio (Bypass / Fallback)
+    urls = ["http://127.0.0.1:1234/v1/chat/completions", "http://localhost:1234/v1/chat/completions"]
+    for url in urls:
+        try:
+            import requests
+            payload = {
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.3,
+                "model": "local-model"
+            }
+            res = requests.post(url, json=payload, timeout=60)
+            if res.status_code == 200:
+                return res.json()['choices'][0]['message']['content']
+        except:
+            continue
+
+    return "ERRO: IA não disponível (Nem local, nem LM Studio)."
+
+# Aliases de compatibilidade para não quebrar o código existente
+get_llama_instance = get_gema_model
 
 def unload_gema_model():
     """
-    Libera memória RAM/VRAM ocupada pelo Gema.
+    Libera memória RAM ocupada pelo LLM.
     """
     global gema_instance
     with gema_lock:
         if gema_instance is not None:
-            logging.info("Descarregando Gema Local para liberar memória...")
+            logging.info("Descarregando Gema Local da RAM...")
             del gema_instance
             gema_instance = None
             gc.collect()
-            import torch
-            torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
 def wait_for_gema_service(progress_callback):
     """
-    [v12.50 LM STUDIO API PIVOT] [v14.80 SEGURANÇA]
-    Verifica se o LM Studio está rodando e aceitando conexões na porta 1234.
-    Se falhar, BLOQUEIA o pipeline para evitar arquivos vazios.
+    [v22.70 ESTRATÉGIA PRIORIDADE LM STUDIO]
+    Tenta se conectar primeiro ao LM Studio (que suporta Gemma 4 perfeitamente).
+    Se não encontrar nada ligado lá, tenta o motor local.
     """
-    progress_callback("Verificando Conexão com LM Studio (Porta 1234)...")
+    progress_callback("Verificando Conexão com LM Studio (Gemma 4)...")
+    
+    # 1. Tenta ver se o LM Studio está aberto (Porta 1234)
+    import requests
     try:
-        import requests
-        response = requests.get("http://localhost:1234/v1/models", timeout=8)
-        if response.status_code == 200:
-            logging.info(">>> Conectado ao Servidor Local Gema (LM Studio) com sucesso! <<<")
+        res = requests.get("http://127.0.0.1:1234/v1/models", timeout=3)
+        if res.status_code == 200:
+            logging.info("✅ LM Studio Detectado! Usando cérebro externo (Alta Performance).")
+            return True
+    except:
+        logging.info("ℹ️ LM Studio não detectado na porta 1234. Tentando motor local...")
+
+    # 2. Se falhar o LM Studio, tenta carregar o modelo local
+    progress_callback("LM Studio offline. Carregando motor nativo (GGUF)...")
+    try:
+        llm = get_llama_instance()
+        if llm:
+            logging.info("✅ Motor Local (llama.cpp) ativo como plano B.")
             return True
         else:
-            msg = "LM Studio respondeu, mas sem sucesso (Status: {response.status_code}). Verifique se o modelo está carregado."
-            logging.error(msg)
-            raise RuntimeError(msg)
+            raise RuntimeError("Nenhum motor de IA disponível (Abra o LM Studio!)")
     except Exception as e:
-        msg = f"ERRO CRÍTICO: Não consegui falar com o LM Studio. O 'Local Server' está LIGADO na porta 1234? Erro: {e}"
+        msg = f"ERRO: IA não encontrada. Certifique-se de que o LM Studio está aberto na porta 1234."
         logging.error(msg)
         raise RuntimeError(msg)
 
-def check_lm_studio():
-    """Verifica se o servidor do LM Studio está rodando na porta 1234."""
-    import socket
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(2)
-    result = sock.connect_ex(('127.0.0.1', 1234))
-    if result == 0:
-        logging.info("✅ CONEXÃO ESTABELECIDA: LM Studio detectado na porta 1234.")
-        return True
-    else:
-        logging.warning("⚠️ AVISO: LM Studio não detectado na porta 1234. Verifique se o 'Local Server' está ON.")
-        return False
+# Bypassed. Redefinido no topo.
+def check_lm_studio_placeholder():
+    return True
 
 def clean_ai_translation(text, original_text):
     """
@@ -2236,30 +2430,47 @@ def clean_ai_translation(text, original_text):
 
 def make_gema_request_with_retries(payload, timeout=3600, retries=5, backoff_factor=2, is_translation=True):
     """
-    [v12.50 LM STUDIO API PIVOT]
-    Faz o pedido de tradução/sincronia diretamente para o host local do LM Studio.
+    [v22.70 MULTI-MODO]
+    Prioriza o LM Studio via HTTP. Se falhar, usa o motor local llama-cpp.
     """
     import requests
-    url = "http://localhost:1234/v1/chat/completions"
     
-    messages = payload.get("messages", [])
-    temp = payload.get("temperature", 0.3)
-    max_tk = payload.get("max_tokens", 2048)
-    
-    api_payload = {
-        "model": "local-model",
-        "messages": messages,
-        "temperature": temp,
-        "max_tokens": max_tk
-    }
-    
+    # --- TENTATIVA 1: LM STUDIO (RECOMENDADO PARA GEMMA 4) ---
+    url = "http://127.0.0.1:1234/v1/chat/completions"
     try:
-        response = requests.post(url, json=api_payload, timeout=timeout)
-        response.raise_for_status()
-        return response
-    except Exception as e:
-        logging.error(f"Erro na comunicação com LM Studio: {e}")
-        raise e
+        res = requests.post(url, json=payload, timeout=60)
+        if res.status_code == 200:
+            return res # Retorna o objeto original do requests
+    except:
+        pass # Segue pro plano B
+
+    # --- TENTATIVA 2: MOTOR LOCAL (LLAMA-CPP) ---
+    llm = get_llama_instance()
+    if llm:
+        try:
+            messages = payload.get("messages", [])
+            temp = payload.get("temperature", 0.3)
+            max_tk = payload.get("max_tokens", 4096)
+            
+            response_data = llm.create_chat_completion(
+                messages=messages,
+                temperature=temp,
+                max_tokens=max_tk
+            )
+            
+            # Simula objeto do requests para não quebrar o resto do app
+            class MockResponse:
+                def __init__(self, json_data):
+                    self._json_data = json_data
+                    self.status_code = 200
+                def json(self): return self._json_data
+                def raise_for_status(self): pass
+            
+            return MockResponse(response_data)
+        except Exception as e:
+            logging.error(f"Erro no motor local (llama-cpp): {e}")
+
+    raise RuntimeError("❌ FALHA GERAL: LM Studio está fechado e o motor local deu erro.")
 
 def gema_batch_processor_v2(batch, cenario_ctx, glossary={}, profile_id='padrao', job_dir=None):
     """
@@ -2321,7 +2532,7 @@ meu_id_01: "Sua traducao brilhante OBRIGATORIAMENTE PT-BR aqui"
             {"role": "system", "content": "<|think|>\nFocarei na emoção e na naturalidade perfeita para PT-BR. Retornarei apenas o formato ID: \"tradução livre e fluida\"."},
             {"role": "user", "content": prompt}
         ], 
-        "temperature": 0.3, "max_tokens": 2048
+        "temperature": 0.3, "max_tokens": 4096
     }
     
     try:
@@ -2419,7 +2630,7 @@ ID: {item['id']} | EN: "{item.get('original_text', '')}"
             {"role": "system", "content": "Serei ultra-preciso. Retornarei apenas a tradução da frase alvo entre aspas, respeitando o contexto das vizinhas."},
             {"role": "user", "content": prompt}
         ],
-        "temperature": 0.3, "max_tokens": 512
+        "temperature": 0.3, "max_tokens": 4096
     }
 
     try:
@@ -2493,7 +2704,7 @@ Responda APENAS com a versao corrigida, natural e dentro do tempo. Use aspas dup
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.3,
-            "max_tokens": 512
+            "max_tokens": 4096
         }
         
         response = make_gema_request_with_retries(payload, is_translation=False)
@@ -3837,10 +4048,56 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     except: pass
         
         safe_json_write(project_data, project_data_path) # Salva as marcações e consolidação
+        
+        # [PHOENIX VRAM SAFETY LOCK - v2026.5]
+        # Inteligência Artificial: Detecta se o usuário PRECISA fechar o LM Studio ou não.
+        import torch
+        tem_gpu = torch.cuda.is_available()
+        
+        if tem_gpu:
+            print("\n" + "!"*70)
+            print(" 🚀 DETECTADA PLACA NVIDIA RTX!")
+            print(" ⚠️  IMPORTANTE: FECHE O LM STUDIO AGORA PARA LIBERAR A VRAM.")
+            print(" O motor de voz (Chatterbox) precisa da GPU livre para não dar erro.")
+            print("!"*70 + "\n")
+            
+            while True:
+                import requests
+                lm_studio_vivo = False
+                try:
+                    res = requests.get("http://127.0.0.1:1234/v1/models", timeout=2)
+                    if res.status_code == 200: lm_studio_vivo = True
+                except: lm_studio_vivo = False
+                
+                if not lm_studio_vivo:
+                    logging.info("✅ VRAM LIBERADA! Iniciando vozes na RTX...")
+                    break
+                
+                cb(100, 5, "AGUARDANDO: Feche o LM Studio para liberar a GPU.")
+                time.sleep(2) # Verifica a cada 2 segundos
+        else:
+            # SEU CASO (CPU): Apenas um lembrete rápido, sem travar o programa.
+            print("\n" + "-"*70)
+            print(" 💻 MODO CPU DETECTADO (16GB+ RAM)")
+            print(" ℹ️  DICA: Você pode manter o LM Studio aberto se quiser.")
+            print(" Se o PC ficar lento, feche o LM Studio para dar mais fôlego à voz.")
+            print("-"*70 + "\n")
+            cb(100, 5, "Tradução concluída. Continuando processo em modo CPU...")
+            import time # Importação local para evitar conflito com variáveis de nome 'time'
+            time.sleep(3) # Apenas 3 segundos para você ler a dica e ele segue sozinho!
 
 
         # --- ETAPA 6: GERAÇÃO TTS CHATTERBOX ---
-        cb(0, 6, "Analisando fila de áudios...")
+        cb(0, 6, "Analisando hardware e VRAM...")
+        try:
+            current_device = get_optimal_device()
+            if "cuda" in current_device:
+                cb(2, 6, "🚀 Usando Placa de Vídeo (Modo Turbo)")
+            else:
+                cb(2, 6, "🐢 Usando Processador (Gemma 4 ativo ou sem GPU)")
+        except:
+            pass
+
         dubbed_audio_dir = job_dir / "_dubbed_audio"
         dubbed_audio_dir.mkdir(exist_ok=True)
 
@@ -3861,6 +4118,11 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     actual_generation_queue.append(seg_data)
 
         if actual_generation_queue:
+            # [MEMORY SAFETY] Limpeza agressiva antes de carregar o motor de voz
+            import gc
+            gc.collect()
+            if torch.cuda.is_available(): torch.cuda.empty_cache()
+            
             cb(0, 6, "Carregando Chatterbox...")
             tts_model = get_chatterbox_model()
             if tts_model is None: raise RuntimeError("Motor TTS indisponível.")
@@ -3937,7 +4199,16 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                         pass
 
                 except Exception as e:
-                    print(f"Erro Crítico no Chatterbox ({seg_data['id']}): {e}")
+                    import traceback
+                    tb_str = traceback.format_exc()
+                    print(f"\n" + "="*50)
+                    print(f"🚨 ERRO CRÍTICO NO CHATTERBOX ({seg_data.get('id', 'N/A')}) 🚨")
+                    print(f"Detalhes do Erro: {e}")
+                    print(f"Traceback Técnico para Debug:")
+                    print(tb_str)
+                    print("="*50 + "\n")
+                    # Registra também no arquivo de log do sistema se o logging estiver ativo
+                    logging.error(f"Chatterbox Falhou na geração de {seg_data.get('id', 'N/A')}:\n{tb_str}")
         else:
              cb(100, 6, "Pronto.")
 
@@ -4117,18 +4388,32 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     all_filters = filters_to_apply + master_chain
                     if all_filters: cmd.extend(['-af', ",".join(all_filters)])
 
-                # Formato de Saída (PCM/Original)
+                # [v2026.8 FIX] Seleção Inteligente de Codec
+                # Se o destino for .mp3, usamos libmp3lame. Se for .wav, usamos pcm_s16le.
+                ext_final = str(final_path.suffix).lower()
+                codec_final = 'libmp3lame' if ext_final == '.mp3' else 'pcm_s16le'
+                
                 output_profile = status.get('detected_profile', {})
                 native_ar = str(output_profile.get('ar', '44100'))
                 native_ac = str(output_profile.get('ac', '1'))
-                cmd.extend(['-c:a', 'pcm_s16le', '-ar', native_ar, '-ac', native_ac])
                 
+                cmd.extend([
+                    '-c:a', codec_final, 
+                    '-ar', native_ar, 
+                    '-ac', native_ac,
+                    '-map_metadata', '-1' # Limpa metadados corrompidos do jogo original
+                ])
+                
+                # Para MP3, adicionamos o bitrate padrão de alta qualidade
+                if codec_final == 'libmp3lame':
+                    cmd.extend(['-b:a', '192k'])
+
                 cmd.append(str(final_path))
-                logging.info(f"🔊 Masterizando: {file_id}")
+                logging.info(f"🔊 Masterizando ({codec_final}): {file_id}")
                 result = subprocess.run(cmd, capture_output=True, text=True)
                 if result.returncode != 0:
                      logging.error(f"❌ FFmpeg falhou para {file_id}: {result.stderr}")
-                     continue # Não copia original! Pula.
+                     continue 
                 
                 if file_id not in durations_cache: durations_cache[file_id] = {}
                 durations_cache[file_id]['speed_factor'] = speed_factor
@@ -4292,6 +4577,7 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
         cb(100, 8, "Processo concluído! Arquivos finais em '_saida_final'.")
 
     except Exception as e:
+        import traceback
         logging.error(f"ERRO NO PIPELINE (Job ID: {job_id}): {e}\n{traceback.format_exc()}")
         set_progress(job_id, 100, len(ETAPAS_JOGOS) - 1, start_time, ETAPAS_JOGOS, subetapa=f"Erro: {e}")
         status_path = job_dir / "job_status.json"
@@ -4305,6 +4591,7 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                 active_jobs.remove(job_id)
                 
         # [MEMORY RECOVERY] Limpeza agressiva no final do Job
+        import gc
         logging.info(" === INICIANDO LIMPEZA AGRESSIVA DE MEMÓRIA PÓS-JOB ===")
         unload_whisper_model()
         unload_chatterbox_model()
@@ -4923,42 +5210,21 @@ def send_upload(path): return send_from_directory(app.config['UPLOAD_FOLDER'], p
 
 if __name__ == "__main__":
     check_ffmpeg()
-    check_lm_studio() # [NEW] Alerta sobre o estado do cérebro IA
-    host, port = "127.0.0.1", 5001
-    url = f"http://{host}:{port}"
-    
+    check_lm_studio()
+    host, port = "0.0.0.0", 5001
+    url = f"http://127.0.0.1:{port}"
+    import logging
+    logging.getLogger('werkzeug').setLevel(logging.ERROR)
     def open_browser():
+        import time
+        time.sleep(1.5)
+        import webbrowser
         webbrowser.open_new(url)
-
-    # Abre o navegador após um pequeno atraso para dar tempo ao servidor de iniciar
-    Timer(1, open_browser).start()
-@app.route('/test_local_gema', methods=['GET'])
-def test_local_gema():
-    """Rota de diagnóstico para validar o Gema Local sem LM Studio."""
-    try:
-        model = get_gema_model()
-        if not model:
-            return jsonify({'status': 'error', 'message': 'Modelo não encontrado ou falha no carregamento.'}), 500
-        
-        response = model.create_chat_completion(
-            messages=[{"role": "user", "content": "Olá, responda apenas: 'Gema Local nos Jogos Ativo!'"}],
-            max_tokens=15
-        )
-        content = response['choices'][0]['message']['content'].strip()
-        return jsonify({
-            'status': 'success',
-            'model_response': content,
-            'info': 'Gema Local (Jogos) funcionando corretamente.'
-        })
-    except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
-if __name__ == '__main__':
-    logging.info("=============================================================================")
-    logging.info("Servidor Nexus (Dublagem de Jogos) iniciado.")
-    logging.info(f"Acesse a aplicação em: http://127.0.0.1:5001")
-    logging.info("O progresso detalhado de todos os jobs será exibido aqui no CMD.")
-    logging.info("================================================================================")
-    
-    # [FIX] Força host 0.0.0.0 para acesso via rede local/Termux se necessário
-    app.run(host='0.0.0.0', port=5001, debug=False, threaded=True)
+    import threading
+    threading.Thread(target=open_browser).start()
+    print("\n" + "="*80)
+    print(f"Servidor NEXUS (Dublagem de Jogos) iniciado.")
+    print(f"Acesse a aplicação em: {url}")
+    print("O progresso detalhado de todos os jobs será exibido aqui no CMD.")
+    print("="*80 + "\n")
+    app.run(host=host, port=port, debug=False, threaded=True)

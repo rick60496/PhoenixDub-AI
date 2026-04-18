@@ -30,6 +30,8 @@ import gc # [NEW] Gerenciamento de Memória
 import webbrowser
 import random
 import numpy as np
+import socket
+import requests
 from queue import Queue
 from sklearn.metrics.pairwise import cosine_similarity
 from enum import Enum
@@ -700,6 +702,109 @@ def find_existing_project(files_hash, job_prefix="job_"):
 
 # --- FUNÇÕES DE CARREGAMENTO DE MODELOS (Híbrido) ---
 
+def get_chatterbox_model():
+    """
+    Singleton para o modelo Chatterbox Oficial (Alta Fidelidade).
+    [v22.90] REFINED RECURSIVE MOCK: Blindagem com Compatibilidade
+    """
+    global chatterbox_model
+    with model_lock:
+        if chatterbox_model is None:
+            official_path = Path("env/models/chatterbox_official")
+            import os
+            if not official_path.exists() or len(os.listdir(official_path)) < 2:
+                logging.info("⏳ Modelo Chatterbox ausente. Iniciando download automático via HuggingFace (isso pode demorar uns minutinhos)...")
+                try:
+                    os.environ["HF_HUB_DISABLE_FAST_HF_TRANSFER"] = "1"
+                    from huggingface_hub import snapshot_download
+                    official_path.mkdir(parents=True, exist_ok=True)
+                    snapshot_download(repo_id="ResembleAI/chatterbox", local_dir=str(official_path), local_dir_use_symlinks=False)
+                    logging.info("✅ Download do Chatterbox concluído!")
+                except Exception as dl_err:
+                    logging.error(f"❌ Erro ao baixar modelo Chatterbox: {dl_err}")
+                    import shutil
+                    shutil.rmtree(str(official_path), ignore_errors=True)
+                    return None
+
+            try:
+                import torch
+                import gc
+                import sys
+                from types import ModuleType
+                
+                # [v23.50] ULTIMATE LAZY BLOCKER: Previne falhas de 'LazyModule' no SpeechBrain
+                class DeepMock(ModuleType):
+                    def __getattr__(self, name):
+                        if name.startswith('__'): return None
+                        fn = f"{self.__name__}.{name}"
+                        if fn not in sys.modules: sys.modules[fn] = DeepMock(fn)
+                        return sys.modules[fn]
+                    def __call__(self, *args, **kwargs): return None
+                    def __bool__(self): return False
+                    def __repr__(self): return f"<DeepMock {self.__name__}>"
+
+                # Bloqueamos as bibliotecas problemáticas conhecidas
+                bad_libs = [
+                    'speechbrain.integrations', 'speechbrain.integrations.k2_fsa', 
+                    'speechbrain.integrations.huggingface', 'speechbrain.integrations.huggingface.wordemb',
+                    'speechbrain.integrations.nlp', 'speechbrain.integrations.ctc',
+                    'k2', 'k2_fsa', 'nvidia', 'nvidia.cudnn'
+                ]
+                for lib in bad_libs:
+                    sys.modules[lib] = DeepMock(lib)
+                
+                gc.collect()
+                if torch.cuda.is_available(): torch.cuda.empty_cache()
+                
+                # Patch para o Perth Watermarker (evita conflitos de memória)
+                try:
+                    import perth
+                    if not hasattr(perth, 'PerthImplicitWatermarker') or perth.PerthImplicitWatermarker is None:
+                        class DummyWatermarker: 
+                            def __init__(self, *args, **kwargs): pass
+                            def __call__(self, *args, **kwargs): return self
+                            def apply_watermark(self, audio, *args, **kwargs): return audio
+                            def get_watermarker(self, *args, **kwargs): return self
+                        perth.PerthImplicitWatermarker = DummyWatermarker
+                except: pass
+
+                from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+                logging.info("Iniciando Motor Oficial (Alta Fidelidade) - Otimizado i5...")
+                
+                # Otimização de CPU para Intel i5 (4 núcleos)
+                os.environ["OMP_NUM_THREADS"] = "3"
+                os.environ["MKL_NUM_THREADS"] = "3"
+                torch.set_num_threads(3)
+                torch.backends.mkldnn.enabled = True
+                
+                raw_model = ChatterboxMultilingualTTS.from_local(str(official_path), device="cpu")
+                
+                class OfficialEngineWrapper:
+                    def __init__(self, model): self.model = model
+                    def generate(self, text, language_id, audio_prompt_path, **kwargs):
+                        # Vacina contra cortes e ajuste fonético PT-BR
+                        text_fix = text.replace("%", " por cento")
+                        if not text_fix.strip().endswith((".", "!", "?")): text_fix = text_fix.strip() + "."
+                        return self.model.generate(
+                            text_fix.strip(), 
+                            language_id=language_id, 
+                            audio_prompt_path=audio_prompt_path,
+                            exaggeration=kwargs.get('exaggeration', 1.05),
+                            cfg_weight=kwargs.get('cfg_weight', 0.5),
+                            temperature=kwargs.get('temperature', 0.7),
+                            top_p=kwargs.get('top_p', 0.9),
+                            min_p=kwargs.get('min_p', 0.1),
+                            repetition_penalty=kwargs.get('repetition_penalty', 1.2)
+                        )
+                
+                chatterbox_model = OfficialEngineWrapper(raw_model)
+                logging.info("Motor Chatterbox Oficial carregado com sucesso (3 Núcleos Ativos).")
+                return chatterbox_model
+            except Exception as e:
+                logging.error(f"Erro Crítico ao carregar Chatterbox: {e}")
+                return None
+    return chatterbox_model
+
 def get_whisper_model():
     """Carrega o modelo Whisper (versão robusta do app_jogos)."""
     global whisper_model
@@ -888,15 +993,40 @@ def wait_for_gema_service(progress_callback):
 def check_lm_studio():
     """Verifica se o servidor do LM Studio está rodando na porta 1234."""
     import socket
-    sock = socket.socket(socket.socket.AF_INET, socket.SOCK_STREAM)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(2)
-    result = sock.connect_ex(('127.0.0.1', 1234))
-    if result == 0:
-        logging.info("✅ CONEXÃO ESTABELECIDA: LM Studio detectado na porta 1234.")
-        return True
-    else:
-        logging.warning("⚠️ AVISO: LM Studio não detectado na porta 1234. Verifique se o 'Local Server' está ON.")
-        return False
+    try:
+        result = sock.connect_ex(('127.0.0.1', 1234))
+        if result == 0:
+            logging.info("✅ CONEXÃO ESTABELECIDA: LM Studio detectado na porta 1234.")
+            return True
+        else:
+            logging.warning("⚠️ AVISO: LM Studio não detectado na porta 1234. Verifique se o 'Local Server' está ON.")
+            return False
+    finally:
+        sock.close()
+
+def clean_ai_translation(text, original_text):
+    """
+    [v20.0 EXTRAÇÃO POR ASPAS (SUGESTÃO DO USUÁRIO)]
+    Pesca a tradução baseada na última ocorrência de aspas duplas.
+    """
+    if not text: return ""
+    if text.count('"') >= 2:
+        import re
+        textos_entre_aspas = re.findall(r'"([^"]*)"', text)
+        if textos_entre_aspas:
+            return textos_entre_aspas[-1].strip()
+
+    t = text.strip().strip('"')
+    orig = original_text.strip().strip('"') if original_text else ""
+    separadores = [" -> ", " => ", " : ", " - "]
+    for sep in separadores:
+        if sep in t:
+            parts = t.split(sep)
+            return parts[-1].strip().strip('"')
+
+    return t
 
 def make_gema_request_with_retries(payload, timeout=3600, retries=5, backoff_factor=2, is_translation=True):
     """
@@ -910,19 +1040,15 @@ def make_gema_request_with_retries(payload, timeout=3600, retries=5, backoff_fac
     temp = payload.get("temperature", 0.3)
     max_tk = payload.get("max_tokens", 2048)
     
-    # Payload no padrão OpenAI (que o LM Studio usa)
     api_payload = {
-        "model": "local-model", # [FIX] Necessário para algumas versões do LM Studio
+        "model": "local-model",
         "messages": messages,
         "temperature": temp,
-        "max_tokens": max_tk,
-        "stream": False
+        "max_tokens": max_tk
     }
-
+    
     try:
         response = requests.post(url, json=api_payload, timeout=timeout)
-        if response.status_code != 200:
-             logging.error(f"Erro LM Studio ({response.status_code}): {response.text}")
         response.raise_for_status()
         return response
     except Exception as e:
@@ -995,79 +1121,58 @@ Sua missão é classificar o lote de frases em inglês.
         return {"vibe": "URGENTE", "genero": "SOCIAL"}
 
 
-def gema_batch_processor_v2(batch, cenario_ctx, glossary="", profile_id='padrao', job_dir=None):
+def gema_batch_processor_v2(batch, cenario_ctx, glossary={}, job_dir=None):
     """
-    [v14.00 UNIFICAÇÃO MASTER] - Processamento de Etapa Única (Single-Pass)
-    [v18.50 REGEX ULTRA-ROBUSTA]: Suporta numerações e logs de diagnóstico.
+    [v14.00 UNIFICAÇÃO MASTER] - Processamento de Etapa Única (Single-Pass) Gemma 4 Otimizado.
+    Versão Universal para Vídeos (Sem perfis de jogo).
     """
     if not batch: return {}
+    start_time = time.time()
     
-    # [v16.4 GATILHO DE COMBATE]
-    keywords = ["tiro", "soldado", "army", "stalker", "tactical", "combate", "guerra", "militar"]
-    is_action = any(x in cenario_ctx.lower() for x in keywords)
-    
-    protocolo_extra = (
-        "3. PROTOCOLO DE RÁDIO: 'Roger' = Copiado (OBRIGATÓRIO). 'Over' = Câmbio.\n"
-        "4. CALLSIGNS E VEÍCULOS (VITAL):... \n"
-    ) if is_action else (
-        "3. FIDELIDADE EMOCIONAL: Foque na naturalidade...\n"
-    )
+    # Instrução Universal Otimizada para Vídeos
+    universal_instructions = "Estilo: Localização profissional, natural e orgânica (PT-BR). Fuja de traduções literais. Priorize a fluidez e o impacto emocional como um brasileiro falaria naturalmente."
 
-    prompt = f"""<|system|>
-VOCÊ É UM DIRETOR DE DUBLAGEM PROFISSIONAL...
-id: [A]: "Texto Fiel" | [B]: "Texto Brasil & Sincronia"
+    prompt = f'''Voce e um Tradutor Literario de Elite (Gemma 4).
+Sua missao e criar a MELHOR traducao possivel para o Portugues do Brasil (PT-BR).
 
-[LISTA DE FRASES PARA CASTING]:
-"""
+[DIRETRIZES]:
+{universal_instructions}
+
+[PADRAO OBRIGATORIO DE RESPOSTA]:
+id: "Sua traducao aqui entre aspas"
+
+[LISTA DE FRASES]:
+'''
     for item in batch:
-        prompt += f"- {item['id']}: \"{item.get('original_text', '')}\" (Limite: {item.get('duration', 0):.2f}s)\n"
+        prompt += f"- {item['id']}: \"{item.get('original_text', '')}\"\n"
 
-    prompt += "\n[AVISO]: USE APENAS O FORMATO 'id: [A]: \"...\" | [B]: \"...\"'"
-    
     payload = {
         "messages": [
-            {"role": "system", "content": "<|think|>\nVocê é um motor de LOCALIZAÇÃO. Responda apenas a lista final formatada. Proibido conversar."},
+            {"role": "system", "content": "<|think|>\nFocarei na naturalidade perfeita para PT-BR. Retornarei apenas o formato ID: \"tradução\"."},
             {"role": "user", "content": prompt}
         ], 
-        "temperature": 0.1, "max_tokens": 2048
+        "temperature": 0.3, "max_tokens": 2048
     }
     
     try:
-        start_time = time.time()
-        response = make_gema_request_with_retries(payload, is_translation=True)
+        response = make_gema_request_with_retries(payload)
         content = response.json()['choices'][0]['message']['content']
         
-        # [v18.50 DIAGNÓSTICO]
-        if job_dir:
-            try:
-                log_file = Path(job_dir) / "ia_batch_debug.log"
-                with open(log_file, "a", encoding="utf-8") as f:
-                    f.write(f"\n--- BATCH {datetime.now()} ---\n{content}\n")
-            except: pass
-
         results = {}
-        # Regex v18.5: Captura IDs mesmo se houver números (1.), espaços ou traços extras
-        matches = re.finditer(r'(?:^|\n)[ \t]*(?:[0-9]+\.?[ \t]*)?([a-zA-Z0-9_\-\.]+)\s*[:\-=>]+\s*"?\s*(.*?)\s*"?(?=\n[ \t]*(?:[0-9]+\.?[ \t]*)?[a-zA-Z0-9_\-\.]+\s*[:\-=>]+|$)', content, re.DOTALL)
+        # Regex v19.0: Ultra-robusta (extração por ID e aspas)
+        item_pattern = r'([a-zA-Z0-9_\-\.]+)\s*[:\-=>]+\s*"?(.*?)"?(?=\n|$)'
+        matches = re.finditer(item_pattern, content)
         
-        for match in matches:
-            clean_id = match.group(1).strip().lower()
-            val = match.group(2).strip()
-            if val.startswith('"') and val.endswith('"'): val = val[1:-1]
+        for m in matches:
+            clean_id = m.group(1).strip().lower()
+            val = m.group(2).strip()
+            # Pesca as aspas se existirem (v20.0)
+            val = clean_ai_translation(val, "")
             results[clean_id] = val
-            
-        elapsed_time = time.time() - start_time
-        if not results and elapsed_time < 5.0:
-            raise RuntimeError(f"FALHA NA TRADUÇÃO: Resposta vazia em {elapsed_time:.2f}s.")
-
-        if not results and len(batch) == 1:
-            quoted_fallback = re.search(r'"(.*?)"', content, re.DOTALL)
-            if quoted_fallback:
-                results[batch[0]['id'].lower()] = quoted_fallback.group(1).strip()
 
         return results
     except Exception as e:
-        if "FALHA NA TRADUÇÃO" in str(e): raise e
-        logging.error(f"Erro no Master Sync: {e}")
+        logging.error(f"Erro no Batch Processor: {e}")
         return {}
 
 def gema_supervisor_lqa_batch_review(batch_with_durations, cenario_ctx, lobe_vibe='ZOEIRA_LIBERADA'):
@@ -3689,101 +3794,64 @@ def process_gema_steps(job_dir, project_data, cb):
     if curr_batch:
         batches.append({'segments': curr_batch, 'direct_context': curr_ctx.strip()})
 
-    # 5. [EXECUÇÃO AGÊNTICA] Loop de Batches (Puro Memória)
+    # 5. [EXECUÇÃO ENXUTA v20.0] Loop de Batches Otimizado (Single-Pass)
     for b_idx, b_data in enumerate(batches):
         batch = b_data['segments']
-        cb(((b_idx / len(batches)) * 100), 4, f"Analisando Lote {b_idx+1}/{len(batches)} (Agentes Gemma 4)...")
+        cb(((b_idx / len(batches)) * 100), 4, f"Traduzindo Lote {b_idx+1}/{len(batches)} (Gemma 4 Elite)...")
         
-        # 5.1 VIBE MASTER (Define o tom para o lote)
-        vibe_data = gema_vibe_master_analyzer(batch, video_context)
-        lobe_vibe = vibe_data.get('vibe', 'NARRATIVO')
-        
-        # 5.2 BATCH PROCESSOR v2 (Tradução e Sincronia Dual-Casting)
-        glossary_arg = ""
-        if "[GLOSSARY]" in video_context:
-            try: glossary_arg = video_context.split("[GLOSSARY]:")[1].strip()
-            except: pass
-            
-        results_map = gema_batch_processor_v2(batch, video_context, glossary_arg, job_dir=job_dir)
+        # 5.1 BATCH PROCESSOR v2 (Single-Pass Otimizado)
+        # O novo Batch Processor já cuida da naturalidade e formato via Pescaria de Aspas.
+        results_map = gema_batch_processor_v2(batch, video_context, job_dir=job_dir)
 
-        # Prepara dados para o Supervisor
-        batch_for_lqa = {}
-        for seg in batch:
-            f_id = seg['id']
-            res_text = results_map.get(f_id, "")
-            batch_for_lqa[f_id] = {
-                "original": seg.get('original_text', ''),
-                "duration": seg.get('effective_duration', seg.get('duration', 0)),
-                "text": res_text
-            }
-
-        # 5.3 SUPERVISOR LQA (Escolhe a melhor opção ou REPROVA)
-        cb(((b_idx / len(batches)) * 100) + 1, 4, f"Supervisor LQA revisando Lote {b_idx+1}...")
-        lqa_decisions = gema_supervisor_lqa_batch_review(batch_for_lqa, video_context, lobe_vibe)
-
-        # 5.4 BATCH CORRECTOR (Resolve reprovados ou falhas técnicas)
-        failed_items = []
         final_results = {}
-        
-        dec_map = {}
-        for d in lqa_decisions:
-            if ":" in d:
-                parts = d.split(":")
-                dec_map[parts[0].strip().lower()] = parts[1].strip().upper()
+        failed_items = []
 
         for seg in batch:
             f_id = seg['id']
-            decision = dec_map.get(f_id, "B") # Default B
-            res_raw = results_map.get(f_id, "")
+            # Pesca a tradução do mapa gerado pela IA
+            translated_text = results_map.get(f_id, "")
             
-            chosen_text = ""
-            if "[B]:" in res_raw and "B" in decision:
-                chosen_text = res_raw.split("[B]:")[1].strip().strip('"')
-            elif "[A]:" in res_raw and "A" in decision:
-                chosen_text = res_raw.split("[A]:")[1].strip().strip('"')
-            else:
-                 chosen_text = res_raw.replace("[A]:", "").replace("[B]:", "").strip().strip('"')
-
+            # Validação de Segurança (Duração vs Caracteres)
             dur = seg.get('effective_duration', seg['duration'])
-            max_chars_hard = int(dur * 18 * 1.15) 
+            # Regra de Ouro: 18 CPS com 15% de tolerância (1.15x)
+            max_chars_allowed = int(dur * 18 * 1.15)
             
-            if "REPROVADO" in decision or len(chosen_text) > max_chars_hard or not chosen_text:
-                seg['_lqa_reason'] = "sincronia" if len(chosen_text) > max_chars_hard else "qualidade"
-                seg['translated_text'] = chosen_text or ""
+            if not translated_text or len(translated_text) > max_chars_allowed:
+                logging.warning(f"  [ALERTA SYNC] {f_id} reprovado ({len(translated_text)}/{max_chars_allowed} chars). Enviando ao Corretor Master.")
+                seg['translated_text'] = translated_text # Passa o rascunho para o corretor saber o que encurtar
                 failed_items.append(seg)
-                logging.warning(f"  [REPROVADO] {f_id}: {seg['_lqa_reason']} ({len(chosen_text)}/max {max_chars_hard})")
             else:
-                final_results[f_id] = chosen_text
+                final_results[f_id] = translated_text
 
+        # 5.2 CORRETOR MASTER (Apenas para emergências de sincronia)
         if failed_items:
-            cb(((b_idx / len(batches)) * 100) + 2, 4, f"Corrigindo {len(failed_items)} itens no Lote {b_idx+1}...")
+            cb(((b_idx / len(batches)) * 100) + 5, 4, f"Corrigindo sincronia de {len(failed_items)} itens...")
             corrected_map = gema_batch_corrector_master(failed_items, video_context, job_dir=job_dir)
             for f_id, text in corrected_map.items():
                 final_results[f_id] = text
 
+        # 5.3 SALVAMENTO E HIGIENIZAÇÃO
         for seg in batch:
             f_id = seg['id']
-            text = final_results.get(f_id, seg.get('original_text'))
+            text = final_results.get(f_id, seg.get('original_text', ''))
+            
+            # Limpeza final de pontuação e tags
             text = clean_translation_fillers(text)
-            if len(text) > 1 and not any(text.endswith(x) for x in ['.', '!', '?', ',']):
-                text += "!"
-                
-            # [v18.50 FALLBACK OBRIGATÓRIO]
-            if not text:
+            
+            # Fallback se a IA sumiu com a frase
+            if not text or len(text) < 1:
                 text = seg.get('original_text', '')
-                try:
-                    with open(job_dir / "ia_batch_debug.log", "a", encoding="utf-8") as f_err:
-                        f_err.write(f"\n[!] ERRO CRÍTICO: O ID '{f_id}' foi ignorado pela IA no casting e no corrector. Usando original.\n")
-                except: pass
-                
+            
             seg['translated_text'] = text
             seg['synced_text'] = text
             seg['sanitized_text'] = text
+            
+            # Proteção de Backup
             safe_json_write(seg, text_backup_dir / f"{f_id}.json")
 
-        # [v18.5] Salvamento deferido para evitar conflitos (APÓS os backups do lote)
+        # Atualiza o project_data periodicamente
         safe_json_write(project_data, job_dir / "project_data.json")
-        cb(((b_idx + 1) / len(batches)) * 100, 4, f"Lote {b_idx+1} FINALIZADO pelo Supervisor.")
+        cb(((b_idx + 1) / len(batches)) * 100, 4, f"Lote {b_idx+1} concluído.")
 
     cb(100, 6, "Agentic Gemma 4 Pipeline: Concluído.")
     unload_gema_model()
@@ -4440,11 +4508,14 @@ def pipeline_dublar_video(job_dir, job_id, start_time):
         active_jobs.add(job_id)
     
     try:
+        # [v11.0] Trava de Segurança: Verifica se o projeto é realmente de dublagem
+        status_data = safe_json_read(job_dir / "job_status.json") or {}
+        if status_data.get('mode') == 'shorts_maker' or "job_shorts" in job_id:
+             raise ValueError(f"O projeto {job_id} é um Shorts e não pode ser processado pelo motor de dublagem.")
+
         set_low_process_priority()
         # Define o callback de progresso
         def cb(p, etapa, s=None): set_progress(job_id, p, etapa, start_time, ETAPAS_DUBLAGEM, s)
-        
-        status_data = safe_json_read(job_dir / "job_status.json") or {}
         
         video_path = next(job_dir.glob("input_video.*"), None) # 1. Tenta nome específico (Upload direto)
         if not video_path:
@@ -6247,7 +6318,7 @@ def pipeline_smart_cut(job_dir, job_id, start_time, start_sec, end_sec):
             '-ss', str(start_sec),
             '-t', str(end_sec - start_sec),
             '-i', str(input_file),
-            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '22',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '22', # Restaurado libx264 (Agora com Motor Full)
             '-c:a', 'aac',
             '-threads', '2',
             str(output_file)
@@ -6272,51 +6343,36 @@ def resume_job(job_id):
     try:
         job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
         if not job_dir.exists():
-            return jsonify({'error': 'Job não encontrado no disco.'}), 404
+            return jsonify({'error': 'Job nao encontrado no disco.'}), 404
             
         status_data = safe_json_read(job_dir / "job_status.json")
         if not status_data:
-            logging.warning(f"Status do job corrompido ou inexistente em {job_id}. Iniciando auto-reconstrução...")
+            logging.warning(f"Status do job corrompido em {job_id}. Iniciando auto-reconstrucao...")
             status_data = {
-                'job_id': job_id,
-                'status': 'processing',
-                'files_hash': 'auto_recovered',
-                'idioma_origem': 'auto',
-                'idioma_destino': 'pt',
-                'num_speakers': 0,
-                'progress': 50.0,
-                'etapa': 'Recuperação do Sistema',
-                'subetapa': 'Retomando após queda de energia...'
+                'job_id': job_id, 'status': 'processing', 'files_hash': 'auto_recovered',
+                'progress': 50.0, 'etapa': 'Recuperacao', 'subetapa': 'Retomando...'
             }
-            input_file = next(job_dir.glob("input_video.*"), next(job_dir.glob("input.*"), None))
-            if input_file:
-                status_data['original_filename'] = input_file.name
             safe_json_write(status_data, job_dir / "job_status.json")
             
-        start_time = float(job_id.split('_')[-1]) if '_' in job_id else time.time()
+        start_time = time.time()
         
-        # Decide qual pipeline rodar baseado no ID ou status
-        if "chat_task" in job_id:
-             threading.Thread(target=pipeline_dublar_video, args=(job_dir, job_id, start_time)).start()
-             message = "Retomando pipeline de Dublagem..."
-        elif "manual_cut" in job_id or "chat_cut" in job_id:
-             # Retoma corte (se falhou ou parou) - na vdd corte é rápido, talvez nem precise resume complexo
-             # mas se precisar, teria que salvar args de corte no status.json. Por simplicidade, refaz dubbed.
-             threading.Thread(target=pipeline_dublar_video, args=(job_dir, job_id, start_time)).start() 
-             message = "Retomando Job de Corte (como novo)..."
-        elif "job_limpeza" in job_id:
-             level = status_data.get('level', 'leve')
-             threading.Thread(target=pipeline_limpar_audio, args=(job_dir, job_id, start_time, level)).start()
-             message = "Retomando Limpeza de Áudio..."
+        # LOGICA DE ROTEAMENTO DE RETOMADA
+        if "job_shorts" in job_id or status_data.get('mode') == 'shorts_maker':
+             threading.Thread(target=pipeline_criar_shorts, args=(job_dir, job_id, start_time)).start()
+             message = "Retomando Shorts Maker IA..."
         elif "job_jogos" in job_id:
              if app_jogos:
                  threading.Thread(target=app_jogos.processar_dublagem_jogos, args=(job_dir, job_id, start_time)).start()
                  message = "Retomando Dublagem de Jogos..."
              else:
-                 return jsonify({'error': 'Módulo de jogos indisponível.'}), 500
+                 return jsonify({'error': 'Modulo de jogos indisponivel.'}), 500
+        elif "job_limpeza" in job_id:
+             level = status_data.get('level', 'leve')
+             threading.Thread(target=pipeline_limpar_audio, args=(job_dir, job_id, start_time, level)).start()
+             message = "Retomando Limpeza de Audio..."
         else:
              threading.Thread(target=pipeline_dublar_video, args=(job_dir, job_id, start_time)).start()
-             message = f"Retomando Job genérico {job_id}..."
+             message = f"Retomando Job generico {job_id}..."
 
         return jsonify({'status': 'processing', 'message': message, 'job_id': job_id})
         
@@ -6624,10 +6680,453 @@ def test_local_gema():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+# --- MÓDULO: SHORTS MAKER IA (v1.0) ---
+def pipeline_criar_shorts(job_dir, job_id, start_time):
+    """
+    Cria uma montagem cinematográfica vertical (TikTok) a partir de fotos e música.
+    """
+    try:
+        from app_jogos import set_progress # Re-uso da função de progresso
+    except:
+        def set_progress(*args, **kwargs): pass
+
+    ETAPAS_SHORTS = ["Iniciando", "1. Preparando Ativos", "2. Renderizando Cenas", "3. Mixagem Final", "4. Concluído"]
+    def cb(p, e, s=None): set_progress(job_id, p, e, start_time, ETAPAS_SHORTS, s)
+
+    try:
+        cb(0, 0, "Preparando ambiente...")
+        params_path = job_dir / "job_params.json"
+        params = safe_json_read(params_path) or {}
+        
+        photo_dir = job_dir / "photos"
+        # Busca dinâmica do arquivo de música (pode ser mp3, wav, mp4, etc)
+        music_files = list(job_dir.glob("background_music.*"))
+        if not music_files: raise ValueError("Trilha sonora não encontrada.")
+        original_music_path = music_files[0]
+        
+        # [NOVO] Garante que o arquivo seja um áudio limpo para o Librosa não dar erro (PySoundFile failed)
+        music_path = job_dir / "background_music_converted.wav"
+        if not music_path.exists():
+            cb(5, 1, "Convertendo trilha sonora para formato nativo WAV...")
+            cmd_conv = [
+                'ffmpeg', '-y', '-i', str(original_music_path),
+                '-vn', '-acodec', 'pcm_s16le', '-ar', '44100', '-ac', '2', str(music_path)
+            ]
+            subprocess.run(cmd_conv, check=True, capture_output=True)
+        
+        output_video = job_dir / "shorts_final.mp4"
+        style = params.get('style', 'zoom_in')
+        orientation = params.get('orientation', 'vertical')
+        
+        # Define dimensões baseadas na orientação
+        if orientation == 'horizontal':
+            target_w, target_h = 1920, 1080
+        else:
+            target_w, target_h = 1080, 1920
+        
+        # 1. Medir a música e detectar batidas (Beat Sync)
+        cb(5, 1, "Analisando batidas da música (Beat Sync)...")
+        import librosa
+        import numpy as np
+        
+        y, sr = librosa.load(str(music_path), sr=None)
+        music_duration = librosa.get_duration(y=y, sr=sr)
+        
+        # Detectar onsets (batidas)
+        onsets = librosa.onset.onset_detect(y=y, sr=sr, units='time')
+        
+        photos_files = sorted(list(photo_dir.glob("*.*")))
+        if not photos_files: raise ValueError("Nenhuma foto encontrada.")
+        num_photos = len(photos_files)
+        # 2. Gerar tempos de corte (Cuts) - LÓGICA DE REPETIÇÃO INTELIGENTE
+        # Se tiver menos de 10 fotos, repetimos a sequência 1 vez para o vídeo não ficar curto/parado.
+        if num_photos < 10:
+            effective_photos = photos_files * 2
+            cb(8, 1, f"Poucas fotos ({num_photos}). Aplicando repetição 1x para dinamismo.")
+        else:
+            effective_photos = photos_files
+            
+        num_effective = len(effective_photos)
+        cut_times = [0.0]
+        curr = 0.0
+        photos_to_render = []
+        
+        # Preenche os tempos baseando-se na lista efetiva
+        # AQUI MUDOU: O loop agora é controlado estritamente pela quantidade de fotos
+        for i in range(num_effective):
+            found_beat = False
+            # Tenta sincronizar com a próxima batida disponível
+            for target in [t for t in onsets if t > curr + 3.0 and t < curr + 5.0]:
+                if target < music_duration: # Não pode passar da música
+                    cut_times.append(target)
+                    photos_to_render.append(effective_photos[i])
+                    curr = target
+                    found_beat = True
+                    break
+            
+            if not found_beat:
+                # Fallback: 3.8 segundos por foto (ritmo bom para shorts)
+                new_cut = curr + 3.8
+                # Se ultrapassar a música, paramos por aqui
+                if new_cut > music_duration:
+                    # Se for a última foto, a gente estica só um pouquinho ou para
+                    break
+                cut_times.append(new_cut)
+                photos_to_render.append(effective_photos[i])
+                curr = new_cut
+
+        # A duração total do vídeo será o último corte gerado
+        video_duration = curr
+        total_scenes = len(photos_to_render)
+        cb(10, 1, f"Processando {total_scenes} cenas. Duração final: {video_duration:.1f}s")
+        
+        scene_list = []
+        possible_styles = ['zoom_in', 'zoom_out', 'pan_right', 'pan_left', 'pan_up', 'pan_down', 'vibe', '3d_tilt']
+
+        for i, photo in enumerate(photos_to_render):
+            duration_per_photo = cut_times[i+1] - cut_times[i]
+            if duration_per_photo <= 0: duration_per_photo = 2.0
+            
+            perc = 10 + (i / total_scenes) * 70
+            current_style = style
+            if style == 'random':
+                current_style = random.choice(possible_styles)
+            
+            cb(perc, 2, f"Renderizando cena {i+1}/{total_scenes} ({current_style})...")
+            
+            scene_path = job_dir / f"scene_{i:03d}.mp4"
+            if scene_path.exists() and scene_path.stat().st_size > 1000:
+                scene_list.append(scene_path)
+                continue
+
+            # LÓGICA DE PREENCHIMENTO E ANIMAÇÃO:
+            # 1. Cobre a tela cortando o excesso para FIM de barras pretas
+            fps = 25
+            total_frames = int((duration_per_photo + 1.0) * fps)
+            safebox = f"scale={target_w}:{target_h}:force_original_aspect_ratio=increase,crop={target_w}:{target_h}"
+            res_s = f"{target_w}x{target_h}"
+            
+            # 2. Roteia os Efeitos Visuais Cinematográficos reais! (Matemática MÁXIMA SEGURO - com margem de 2px)
+            if current_style == 'zoom_out':
+                zp = f"zoompan=z='max(1.15-0.0015*on,1)':d={total_frames}:x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':s={res_s}:fps={fps}"
+            elif current_style == 'pan_right':
+                zp = f"zoompan=z=1.1:d={total_frames}:x='(iw-iw/zoom-2)*(on/{total_frames})':y='ih/2-(ih/zoom)/2':s={res_s}:fps={fps}"
+            elif current_style == 'pan_left':
+                zp = f"zoompan=z=1.1:d={total_frames}:x='(iw-iw/zoom-2)*(1-on/{total_frames})':y='ih/2-(ih/zoom)/2':s={res_s}:fps={fps}"
+            elif current_style == 'pan_down':
+                zp = f"zoompan=z=1.1:d={total_frames}:x='iw/2-(iw/zoom)/2':y='(ih-ih/zoom-2)*(on/{total_frames})':s={res_s}:fps={fps}"
+            elif current_style == 'pan_up':
+                zp = f"zoompan=z=1.1:d={total_frames}:x='iw/2-(iw/zoom)/2':y='(ih-ih/zoom-2)*(1-on/{total_frames})':s={res_s}:fps={fps}"
+            elif current_style == 'vibe' or current_style == '3d_tilt':
+                zp = f"zoompan=z='min(max(zoom,pzoom)+0.001,1.5)':d={total_frames}:x='iw/2-(iw/zoom)/2+sin(on/30)*5':y='ih/2-(ih/zoom)/2+cos(on/30)*5':s={res_s}:fps={fps}"
+            else: # zoom_in
+                zp = f"zoompan=z='min(pzoom+0.0015,1.5)':d={total_frames}:x='iw/2-(iw/zoom)/2':y='ih/2-(ih/zoom)/2':s={res_s}:fps={fps}"
+                
+            filter_v = f"{safebox},{zp},format=yuv420p"
+            
+            # 🎨 LÓGICA DE FILTRO ESTÉTICO (Restaurada para Motor Full)
+            vis_filter = params.get('filter', 'none')
+            if vis_filter == 'random':
+                vis_filter = random.choice(['vhs', 'cinema', 'light_leak', 'vivid', 'none'])
+            
+            aesthetic_af = ""
+            if vis_filter == 'vhs':
+                aesthetic_af = ",curves=vintage,vignette='PI/4'"
+            elif vis_filter == 'cinema':
+                aesthetic_af = ",curves=strong_contrast,vignette='PI/5'"
+            elif vis_filter == 'light_leak':
+                aesthetic_af = ",eq=brightness=0.05:saturation=1.2,hue=h=20:s=1.1,vignette='PI/4'"
+            elif vis_filter == 'vivid':
+                aesthetic_af = ",eq=saturation=1.2:contrast=1.1" 
+            
+            filter_v += aesthetic_af + ",setsar=1"
+            
+            # CONVERSÃO PARA PNG (Bypass no bug do decodificador JPEG mjpeg + loop)
+            safe_png_path = str(photo) + "_safe.png"
+            try:
+                subprocess.run(['ffmpeg', '-y', '-i', str(photo), '-frames:v', '1', safe_png_path], check=True, capture_output=True)
+            except:
+                safe_png_path = str(photo)
+            
+            cmd = [
+                'ffmpeg', '-y', '-loop', '1', '-i', safe_png_path,
+                '-vf', filter_v,
+                '-t', str(round(duration_per_photo, 2)), 
+                '-c:v', 'mpeg4', '-q:v', '2', '-pix_fmt', 'yuv420p', str(scene_path)
+            ]
+            
+            try:
+                # Execução Direta (Sem shell=True para evitar erros de aspas no Windows)
+                subprocess.run(cmd, check=True, capture_output=True)
+            except subprocess.CalledProcessError as e:
+                err_msg = e.stderr.decode() if e.stderr else str(e)
+                logging.error(f"Erro FFmpeg detalhado: {err_msg}")
+                raise RuntimeError(f"Erro FFmpeg ao criar cena: {scene_path}")
+            finally:
+                # Cleanup da sujeira profilática
+                if safe_png_path != str(photo) and os.path.exists(safe_png_path):
+                    try: os.remove(safe_png_path)
+                    except: pass
+                
+            scene_list.append(scene_path)
+            
+        # 3. Mixagem Final com Transições (XFADE)
+        cb(85, 3, "Aplicando transições dinâmicas (Circle, Wipe, Pixelize)...")
+        
+        # Lista de transições profissionais do FFmpeg
+        trans_list = ['fade', 'wipeleft', 'wiperight', 'wipeup', 'wipedown', 'circleopen', 'pixelize', 'dissolve']
+        
+        if num_photos > 1:
+            cmd_mix = ['ffmpeg', '-y']
+            for s in scene_list: cmd_mix.extend(['-i', str(s)])
+            cmd_mix.extend(['-i', str(music_path)])
+            
+            filter_complex = ""
+            overlap = 0.5 # segundos
+            
+            # O offset da primeira transição é o final da primeira cena menos o overlap
+            current_offset = (cut_times[1] - cut_times[0]) - overlap
+            
+            # Primeiro par (0 e 1)
+            t = random.choice(trans_list)
+            filter_complex += f"[0:v][1:v]xfade=transition={t}:duration={overlap}:offset={current_offset}[v1];"
+            
+            # Próximos pares (v_prev e i)
+            for i in range(2, total_scenes):
+                t = random.choice(trans_list)
+                prev_v = f"v{i-1}"
+                next_v = f"v{i}"
+                current_offset = current_offset + (cut_times[i] - cut_times[i-1]) - overlap
+                filter_complex += f"[{prev_v}][{i}:v]xfade=transition={t}:duration={overlap}:offset={current_offset}[{next_v}];"
+            
+            # [CORREÇÃO CRÍTICA] Cálculo da Duração Real após XFADE
+            # Cada transição xfade sobrepõe os vídeos, então perdemos 'overlap' segundos por transição.
+            actual_duration = video_duration - ((total_scenes - 1) * overlap)
+            
+            last_v_idx = total_scenes - 1
+            last_v = f"v{last_v_idx}"
+            
+            # [NEW] Efeito de Fade Out CINEMÁTICO (2.5 segundos de suavidade)
+            # O fade deve começar 2.5s antes do FIM REAL da montagem (já descontado o xfade)
+            fade_duration = 2.5
+            fade_start = actual_duration - fade_duration
+            if fade_start < 0: fade_start = 0
+            
+            # Fade de Vídeo (Escurecimento)
+            filter_complex += f"[{last_v}]fade=t=out:st={fade_start}:d={fade_duration}[vfinal];"
+            # Fade de Áudio (Volume abaixando)
+            filter_complex += f"[{total_scenes}:a]afade=t=out:st={fade_start}:d={fade_duration}:curve=exp[afinal]"
+            
+            cmd_mix.extend([
+                '-filter_complex', filter_complex,
+                '-map', '[vfinal]', '-map', '[afinal]',
+                '-t', str(round(actual_duration, 2)), 
+                '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', str(output_video)
+            ])
+            subprocess.run(cmd_mix, check=True)
+        else:
+            # Caso de apenas 1 foto (sem transição)
+            subprocess.run([
+                'ffmpeg', '-y', '-i', str(scene_list[0]), '-i', str(music_path),
+                '-c:v', 'copy', '-c:a', 'aac', '-shortest', str(output_video)
+            ], check=True)
+
+        cb(100, 4, "Montagem concluída com sucesso!")
+        
+        status_data = safe_json_read(job_dir / "job_status.json") or {}
+        status_data['status'] = 'completed'
+        status_data['final_file'] = f"/uploads/{job_id}/shorts_final.mp4"
+        safe_json_write(status_data, job_dir / "job_status.json")
+
+    except Exception as e:
+        logging.error(f"Erro no Shorts Maker: {e}\n{traceback.format_exc()}")
+        cb(100, 4, f"Erro: {e}")
+        status_data = safe_json_read(job_dir / "job_status.json") or {}
+        status_data['status'] = 'failed'
+        status_data['error'] = str(e)
+        safe_json_write(status_data, job_dir / "job_status.json")
+
 @app.route('/uploads/<path:path>')
 def send_upload(path):
     """Serve arquivos da pasta de uploads (ex: vídeos finalizados)."""
     return send_from_directory(app.config['UPLOAD_FOLDER'], path)
+
+@app.route('/criar_shorts_ia', methods=['POST'])
+def criar_shorts_route():
+    start_time = time.time()
+    if 'music' not in request.files or 'photos' not in request.files:
+        return jsonify({'error': 'Faltam fotos ou música.'}), 400
+    
+    music_file = request.files['music']
+    photo_files = request.files.getlist('photos')
+    
+    timestamp = int(time.time())
+    job_id = f"job_shorts_{timestamp}"
+    job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Salva fotos em subpasta
+    p_dir = job_dir / "photos"
+    p_dir.mkdir(exist_ok=True)
+    for i, p in enumerate(photo_files):
+        ext = Path(p.filename).suffix or ".jpg"
+        p.save(p_dir / f"img_{i:03d}{ext}")
+        
+    # Salva música com extensão original
+    music_ext = Path(music_file.filename).suffix or ".mp3"
+    music_path = job_dir / f"background_music{music_ext}"
+    music_file.save(music_path)
+    
+    # Params
+    params = {
+        'style': request.form.get('style', 'zoom_in'),
+        'filter': request.form.get('filter', 'none'),
+        'orientation': request.form.get('orientation', 'vertical'),
+        'num_photos': len(photo_files)
+    }
+    safe_json_write(params, job_dir / "job_params.json")
+    
+    status_data = {'job_id': job_id, 'status': 'iniciando', 'mode': 'shorts_maker'}
+    safe_json_write(status_data, job_dir / "job_status.json")
+    
+    threading.Thread(target=pipeline_criar_shorts, args=(job_dir, job_id, start_time)).start()
+    return jsonify({'status': 'success', 'job_id': job_id})
+
+# --- NEW: MAGIC CUT IA PIPELINE ---
+@app.route('/api/magic_cut/start', methods=['POST'])
+def magic_cut_route():
+    start_time = time.time()
+    if 'video_file' not in request.files:
+        return jsonify({'error': 'Nenhum vídeo enviado.'}), 400
+    
+    video = request.files['video_file']
+    timestamp = int(time.time())
+    job_id = f"job_magic_{timestamp}"
+    job_dir = Path(app.config['UPLOAD_FOLDER']) / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+    
+    v_path = job_dir / f"raw_video{Path(video.filename).suffix}"
+    video.save(v_path)
+    
+    params = {
+        'remove_silence': request.form.get('remove_silence') == 'true',
+        'remove_errors': request.form.get('remove_errors') == 'true',
+        'normalize': request.form.get('normalize') == 'true'
+    }
+    safe_json_write(params, job_dir / "job_params.json")
+    
+    status_data = {'job_id': job_id, 'status': 'iniciando', 'mode': 'magic_cut'}
+    safe_json_write(status_data, job_dir / "job_status.json")
+    
+    threading.Thread(target=pipeline_magic_cut, args=(job_dir, job_id, start_time)).start()
+    return jsonify({'status': 'success', 'job_id': job_id})
+
+def pipeline_magic_cut(job_dir, job_id, start_time):
+    try:
+        from app_jogos import set_progress
+    except:
+        def set_progress(*args, **kwargs): pass
+
+    ETAPAS = ["Analisando", "Cortando Silêncios", "Removendo Erros", "Finalizando", "Concluído"]
+    def cb(p, e, s=None): set_progress(job_id, p, e, start_time, ETAPAS, s)
+
+    try:
+        cb(5, 0, "Analisando áudio para detectar silêncios...")
+        params = safe_json_read(job_dir / "job_params.json")
+        v_files = list(job_dir.glob("raw_video.*"))
+        if not v_files: return
+        input_v = v_files[0]
+        output_v = job_dir / "magic_final.mp4"
+
+        # 1. DETECTAR SILÊNCIO (Configuração mais "Humana")
+        # d=0.8: Só considera silêncio se for maior que 0.8 segundos (preserva pausas naturais)
+        # noise=-35dB: Um pouco mais sensível a barulhos de fundo
+        cmd_detect = [
+            'ffmpeg', '-i', str(input_v),
+            '-af', 'silencedetect=noise=-35dB:d=0.8',
+            '-f', 'null', '-'
+        ]
+        result = subprocess.run(cmd_detect, capture_output=True, text=True)
+        
+        silence_starts = re.findall(r"silence_start: ([\d\.]+)", result.stderr)
+        silence_ends = re.findall(r"silence_end: ([\d\.]+)", result.stderr)
+        
+        # 2. CALCULAR SEGMENTOS DE "SOM" COM PADDING (Margem de Segurança)
+        import ffmpeg
+        probe = ffmpeg.probe(str(input_v))
+        total_dur = float(probe['format']['duration'])
+        
+        keep_segments = []
+        last_end = 0.0
+        padding = 0.3 # 0.3 segundos de respiro antes e depois de cada fala
+        
+        for start, end in zip(silence_starts, silence_ends):
+            s, e = float(start), float(end)
+            
+            # Deixamos um 'padding' de respiro após a fala anterior e antes do corte
+            cut_start = s + padding
+            # Deixamos um 'padding' antes de começar a próxima fala
+            cut_end = e - padding
+            
+            # Se o trecho de som for minimamente relevante
+            if s - last_end > 0.1:
+                # Mantemos do fim do silêncio anterior (last_end) até o início deste silêncio + padding
+                keep_segments.append((max(0, last_end - padding), min(total_dur, s + padding)))
+            
+            last_end = e
+            
+        # Adiciona o último bloco de som
+        if total_dur - last_end > 0.1:
+            keep_segments.append((max(0, last_end - padding), total_dur))
+
+        # [OTIMIZAÇÃO] Mesclar segmentos que se sobrepõe por causa do padding
+        merged = []
+        if keep_segments:
+            curr_s, curr_e = keep_segments[0]
+            for next_s, next_e in keep_segments[1:]:
+                if next_s <= curr_e: # Se encostam ou sobrepõe
+                    curr_e = max(curr_e, next_e)
+                else:
+                    merged.append((curr_s, curr_e))
+                    curr_s, curr_e = next_s, next_e
+            merged.append((curr_s, curr_e))
+        
+        keep_segments = merged
+
+        # 3. EXECUTAR CORTES
+        cb(30, 1, f"Identificados {len(keep_segments)} trechos com respiros preservados. Iniciando Magic Cut...")
+        
+        v_select = " + ".join([f"between(t,{s},{e})" for s, e in keep_segments])
+        a_select = " + ".join([f"between(t,{s},{e})" for s, e in keep_segments])
+        
+        # Filtro de Vídeo e Áudio para remover os buracos
+        # Usamos 'setpts' e 'asetpts' para reajustar o tempo dos frames e não dar stuter
+        filter_v = f"select='{v_select}',setpts=N/FRAME_RATE/TB"
+        filter_a = f"aselect='{a_select}',asetpts=N/SR/TB"
+        
+        # Opcional: Normalização (Compressão Dinâmica)
+        if params.get('normalize'):
+            filter_a += ",loudnorm=I=-16:TP=-1.5:LRA=11"
+
+        cmd_cut = [
+            'ffmpeg', '-y', '-i', str(input_v),
+            '-vf', filter_v,
+            '-af', filter_a,
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '22',
+            '-c:a', 'aac', '-b:a', '192k', str(output_v)
+        ]
+        
+        subprocess.run(cmd_cut, check=True)
+        cb(100, 4, "Edição Mágica concluída!")
+        
+        status_data = safe_json_read(job_dir / "job_status.json") or {}
+        status_data['status'] = 'completed'
+        status_data['final_file'] = f"/uploads/{job_id}/magic_final.mp4"
+        safe_json_write(status_data, job_dir / "job_status.json")
+
+    except Exception as e:
+        logging.error(f"Erro no Magic Cut: {e}")
+        cb(100, 4, f"Erro: {e}")
 
 # --- PONTO DE ENTRADA ---
 if __name__ == "__main__":
