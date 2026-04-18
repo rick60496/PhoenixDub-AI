@@ -81,6 +81,9 @@ O PhoenixDub possui dois motores independentes:
 | **O som da dublagem sai mudo** | Verifique se o eSpeak-NG está instalado corretamente. |
 | **Erro 1234 (Connection Refused)** | O LM Studio não está com o "Start Server" ligado. |
 
+### 🎖️ Créditos e Agradecimentos
+Para conhecer todas as pessoas e tecnologias envolvidas no PhoenixDub, veja o arquivo [CREDITS.md](CREDITS.md).
+
 ---
 
 ## English
@@ -162,8 +165,8 @@ PhoenixDub features two independent engines:
 
 ---
 
-## 🎖️ Créditos e Agradecimentos
-Para conhecer todas as pessoas e tecnologias envolvidas no PhoenixDub, veja o arquivo [CREDITS.md](CREDITS.md).
+### 🎖️ Credits and Acknowledgments
+To meet the incredible people and technologies behind PhoenixDub, check the [CREDITS.md](CREDITS.md) file.
 
 ---
 *Developed with ❤️ by Paulo Henrik Carvalho de Araújo.*
