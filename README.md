@@ -32,26 +32,42 @@
 1.  Instale o **LM Studio** ([lmstudio.ai](https://lmstudio.ai)).
 2.  Pesquise e baixe: `unsloth/gemma-4-E4B-it-GGUF` (Recomendado: Q4_K_M).
 3.  Em **Local Server**, clique em **Start Server** na porta **1234**.
+4.  > [!CAUTION]
+    > **USUÁRIOS NVIDIA RTX**: Após a fase de tradução, o programa pedirá para você **FECHAR O LM STUDIO**. Isso é obrigatório para liberar a memória (VRAM) para o motor de voz.
 
 #### Passo 3: Token HuggingFace (Opcional, mas Recomendado)
 1.  No terminal (Anaconda Prompt), digite: `huggingface-cli login`.
 2.  Cole seu Token de acesso (gerado no site huggingface.co).
 
-#### Passo 4: Rodando o Instalador
+#### Passo 4: Rodando o Instalador/Reparador
 Na pasta do projeto, execute:
 ```bash
 python setup.py
 ```
-*   **Opção 1 (Modo Turbo)**: Use se você tiver uma placa NVIDIA RTX.
-*   **Opção 2 (Modo Padrão)**: Use se você for rodar apenas no processador (CPU).
+*   **Opção [ 1 ] (REPARO RÁPIDO)**: Use se algo der erro ou se estiver atualizando. (Recomendado).
+*   **Opção [ 2 ] (MODO TURBO/RTX)**: Use se você tiver uma placa NVIDIA RTX.
+*   **Opção [ 3 ] (MODO PADRÃO/CPU)**: Use se você for rodar apenas no processador.
 
 ---
 
-### ⚡ Aceleração ONNX (Como ativar o Turbo)
-Para ganhar até 2x mais velocidade na RTX 2060 ou no i5:
-1.  Baixe os modelos em: [ONNX Community Chatterbox](https://huggingface.co/onnx-community/chatterbox-multilingual-ONNX).
-2.  Crie a pasta `models/chatterbox_onnx/` no projeto.
-3.  Coloque os arquivos `.onnx` e o `tokenizer.json` lá dentro. O programa detectará automaticamente no próximo início.
+### 🛠️ Configuração do FFmpeg FULL (Obrigatório)
+
+Diferente do FFmpeg comum, você precisa da versão **completa** para gerar arquivos MP3 e vídeos de alta qualidade:
+
+1. Acesse: [Gyan.dev (FFmpeg Full)](https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.7z)
+2. Baixe o arquivo `ffmpeg-release-full.7z`.
+3. Extraia e copie o arquivo `ffmpeg.exe` (da pasta `bin`) para:
+   - `C:\IA_dublagem\env\Library\bin\ffmpeg.exe`
+   - (Substitua o arquivo que já estiver lá).
+
+---
+
+### 🕹️ Como Usar (App Jogos vs App Vídeos)
+
+O PhoenixDub possui dois motores independentes:
+
+*   **Dublagem de Jogos (`app_jogos.py`)**: Para arquivos de áudio extraídos de games (WAV/MP3). Possui sistema agêntico que respeita a duração original e usa o estilo do personagem.
+*   **Dublagem de Vídeos (`app_videos.py`)**: Para trailers e cutscenes. Possui o **Magic Cut** (corte automático de silêncios) e redublagem sincronizada.
 
 ---
 
@@ -59,9 +75,10 @@ Para ganhar até 2x mais velocidade na RTX 2060 ou no i5:
 
 | Problema | Solução |
 | :--- | :--- |
+| **"Invalid audio stream" ou erro MP3** | Você está usando o FFmpeg básico. Instale o **FFmpeg FULL** como descrito acima. |
+| **"Out of Memory" ou Erro 1455** | Você não fechou o LM Studio quando o programa pediu. Feche-o para liberar VRAM. |
 | **"espeak-ng not found"** | Você esqueceu o Passo 1. Instale o eSpeak-NG e reinicie o PC. |
-| **Erro de versão "huggingface-hub"** | Corrigido no setup.py atual. Rode a instalação novamente com a opção 4 (deletar) e depois a 1 ou 2. |
-| **O som da dublagem sai mudo** | Verifique se o eSpeak-NG está instalado corretamente e se os Drivers de Som estão OK. |
+| **O som da dublagem sai mudo** | Verifique se o eSpeak-NG está instalado corretamente. |
 | **Erro 1234 (Connection Refused)** | O LM Studio não está com o "Start Server" ligado. |
 
 ---
@@ -94,26 +111,42 @@ Para ganhar até 2x mais velocidade na RTX 2060 ou no i5:
 1.  Install **LM Studio** ([lmstudio.ai](https://lmstudio.ai)).
 2.  Search and download: `unsloth/gemma-4-E4B-it-GGUF` (Recommended: Q4_K_M).
 3.  In **Local Server**, click **Start Server** on port **1234**.
+4.  > [!CAUTION]
+    > **NVIDIA RTX USERS**: After the translation phase, the program will ask you to **CLOSE LM STUDIO**. This is mandatory to free up VRAM for the voice engine.
 
 #### Step 3: HuggingFace Token (Optional, but Recommended)
 1.  In your terminal (Anaconda Prompt), type: `huggingface-cli login`.
 2.  Paste your access Token (generated at huggingface.co).
 
-#### Step 4: Running the Installer
+#### Step 4: Running the Installer/Repairer
 In the project folder, execute:
 ```bash
 python setup.py
 ```
-*   **Option 1 (Turbo Mode)**: Use this if you have an NVIDIA RTX card.
-*   **Option 2 (Standard Mode)**: Use this if you are running on the processor (CPU) only.
+*   **Option [ 1 ] (QUICK REPAIR)**: Use this if you encounter errors or are updating. (Recommended).
+*   **Option [ 2 ] (TURBO/RTX MODE)**: Use if you have an NVIDIA RTX card.
+*   **Option [ 3 ] (STANDARD/CPU MODE)**: Use if you are running on the processor only.
 
 ---
 
-### ⚡ ONNX Acceleration (Activate Turbo Mode)
-To gain up to 2x speed on RTX 2060 or i5 CPUs:
-1.  Download models from: [ONNX Community Chatterbox](https://huggingface.co/onnx-community/chatterbox-multilingual-ONNX).
-2.  Create a `models/chatterbox_onnx/` folder in the project directory.
-3.  Place the `.onnx` files and `tokenizer.json` inside. The program will auto-detect them on the next run.
+### 🛠️ FFmpeg FULL Setup (Mandatory)
+
+Unlike basic FFmpeg, you need the **Full** build to support MP3 encoding and high-quality video:
+
+1. Visit: [Gyan.dev (FFmpeg Full)](https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.7z)
+2. Download `ffmpeg-release-full.7z`.
+3. Extract and copy the `ffmpeg.exe` file (from the `bin` folder) to:
+   - `C:\IA_dublagem\env\Library\bin\ffmpeg.exe`
+   - (Overwrite the existing file).
+
+---
+
+### 🕹️ How to Use (Game App vs Video App)
+
+PhoenixDub features two independent engines:
+
+*   **Game Dubbing (`app_jogos.py`)**: For audio assets extracted from games. Agentic system that respects timing and character style.
+*   **Video Dubbing (`app_videos.py`)**: For trailers and cutscenes. Features **Magic Cut** and synchronized re-dubbing.
 
 ---
 
@@ -121,9 +154,10 @@ To gain up to 2x speed on RTX 2060 or i5 CPUs:
 
 | Issue | Solution |
 | :--- | :--- |
+| **"Invalid audio stream" or MP3 error** | You are using basic FFmpeg. Install **FFmpeg FULL** as described above. |
+| **"Out of Memory" or Error 1455** | You didn't close LM Studio when prompted. Close it to free up VRAM. |
 | **"espeak-ng not found"** | You missed Step 1. Install eSpeak-NG and restart your terminal/PC. |
-| **"huggingface-hub" version error** | Fixed in current setup.py. Re-run installation with Option 4 (delete) then 1 or 2. |
-| **Dubbed audio is silent** | Ensure eSpeak-NG is correctly installed and your system Audio Drivers are OK. |
+| **Dubbed audio is silent** | Ensure eSpeak-NG is correctly installed. |
 | **Error 1234 (Connection Refused)** | LM Studio "Start Server" is not toggled on. |
 
 ---
