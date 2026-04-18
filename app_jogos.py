@@ -15,6 +15,10 @@
 import requests
 import json
 import logging
+import warnings
+# [v2026.10 FIX] Esconde avisos chatos do SpeechBrain que parecem erros mas não são
+warnings.filterwarnings("ignore", category=UserWarning, module="speechbrain")
+warnings.filterwarnings("ignore", message="Module 'speechbrain.*' was deprecated")
 import random
 import re
 import os
@@ -1276,14 +1280,15 @@ def get_optimal_device():
             free_vram_gb = free_m / (1024**3)
             total_vram_gb = total_m / (1024**3)
 
-            # TRAVA INTELIGENTE: Menos de 1.5GB indica LLM rodando na VRAM
-            if free_vram_gb < 1.5:
-                logging.warning(f"⚠️ [VRAM] Apenas {free_vram_gb:.1f}GB livres de {total_vram_gb:.1f}GB.")
-                logging.warning("O Gemma 4 no LM Studio parece estar usando a GPU. Forçando CPU!")
+            # TRAVA INTELIGENTE: Baixei para 800MB para ser mais permissivo em placas de 6GB
+            if free_vram_gb < 0.8:
+                logging.warning(f"⚠️ [ALERTA DE HARDWARE] A placa de vídeo está quase cheia ({free_vram_gb:.1f}GB livres).")
+                logging.warning("🔥 PARA VELOCIDADE MÁXIMA: Feche o LM Studio ou outros jogos antes de dublar.")
+                logging.warning("Forçando modo CPU (Lento) para evitar crash por falta de memória...")
                 return "cpu"
             
-            if total_vram_gb >= 3.5:
-                logging.info(f"🚀 [HARDWARE] Placa NVIDIA detectada e LIVRE ({free_vram_gb:.1f}GB disp.).")
+            if total_vram_gb >= 2.0: # Baixei de 3.5 para 2.0 para aceitar placas de entrada
+                logging.info(f"🚀 [RTX DETECTADA] Usando GPU NVIDIA ({free_vram_gb:.1f}GB livres).")
                 return f"cuda:{device_idx}"
         except Exception as e:
             logging.warning(f"⚠️ Erro ao checar VRAM: {e}. Usando CPU.")
@@ -3595,6 +3600,17 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
         source_language = status.get('source_language', 'auto')
         diarization_dir = job_dir / "_2_PARA_AS_PASTAS_DE_VOZ"
         project_data_path = job_dir / "project_data.json"
+        
+        # [ALERTA DE VELOCIDADE] Verifica se a GPU está livre antes de começar
+        if torch.cuda.is_available():
+            free_m, _ = torch.cuda.mem_get_info()
+            free_gb = free_m / (1024**3)
+            if free_gb < 1.0:
+                logging.warning("⚠️  [AVISO DE VELOCIDADE] Sua Placa de Vídeo está quase cheia!")
+                logging.info("👉 DICA: Feche o LM Studio agora. Você só vai precisar dele na ETAPA 5.")
+                logging.info("👉 Isso vai acelerar a Transcrição e Diarização em até 20x.")
+                cb(0, 1, "AVISO: Feche o LM Studio para acelerar o início.")
+                time.sleep(2) # Pausa curta para ele ler o aviso
 
         cb(0, 1, "Iniciando Diarização Automática...")
         # [MODIFICADO] Substituído Manual por Auto Diarização
@@ -3712,19 +3728,24 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
         for backup_file in text_backup_dir.glob("*.json"):
             file_id = backup_file.stem
             if file_id in project_data_map:
-                # [FIX UPDATED] Sempre confia no backup, pois é onde o usuário salva edições manuais
                 backup_data = safe_json_read(backup_file)
                 if backup_data:
-                    project_data_map[file_id].update(backup_data)
+                    # [v2026.11 FIX] Fusão Inteligente: O backup NÃO pode apagar um Manual Edit preenchido na memória
+                    current_manual = project_data_map[file_id].get('manual_edit_text', '').strip()
+                    fresh_manual = backup_data.get('manual_edit_text', '').strip()
+                    
+                    for key, val in backup_data.items():
+                        if key == 'manual_edit_text' and not val and current_manual:
+                            # Se o backup está vazio mas a memória tem texto, não sobrescreve o Manual
+                            continue
+                        project_data_map[file_id][key] = val
+                    
                     updated_count += 1
-                    if backup_data and backup_data.get('sanitized_text'):
-                        project_data_map[file_id].update(backup_data)
-                        updated_count += 1
         
         if updated_count > 0:
             project_data = list(project_data_map.values())
             project_data.sort(key=lambda x: x.get('id', ''))
-            logging.info(f"Dados do projeto atualizados com {updated_count} backups. Salvando progresso.")
+            logging.info(f"Dados do projeto sincronizados com {updated_count} backups. Edições manuais preservadas. 🛡️")
             safe_json_write(project_data, project_data_path)
         else:
             logging.info("Nenhum progresso novo encontrado nos backups para sincronizar.")
@@ -3742,6 +3763,9 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
             if 'manual_edit_text' not in seg_data:
                 seg_data['manual_edit_text'] = ""
                 needs_resave = True
+            elif seg_data['manual_edit_text']:
+                # [SEGURANÇA] Se o campo manual está preenchido, garantimos que ele não seja resetado aqui
+                pass
 
 
         if needs_resave:
@@ -3769,9 +3793,17 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                 logging.info(f"Segmento {seg_data['id']} preservado (já é Português).")
 
             # [v12.32 SINCRONIA DE DADOS]
-            # O project_data NÃO deve ter prioridade se o usuário apagou fisicamente o arquivo do 
-            # _backup_texto_final para forçar a re-tradução.
             backup_path = job_dir / "_backup_texto_final" / f"{seg_data['id']}.json"
+            
+            # [REGRA DE OURO] Se existe texto manual na memória (project_data), ele é SAGRADO.
+            # Se o backup sumiu, nós RECRIAMOS o backup a partir do manual, em vez de apagar o manual.
+            if seg_data.get('manual_edit_text'):
+                if not backup_path.exists():
+                    logging.info(f"🛡️ [RESGATE] Recriando backup para '{seg_data['id']}' a partir da edição manual preservada.")
+                    safe_json_write(seg_data, backup_path)
+                continue # Pula qualquer lógica de "pop" ou limpeza para este arquivo
+
+            # [PROTEÇÃO VITALÍCIA] Se NÃO tem manual, aí sim podemos limpar traduções antigas se o backup sumir
             if not backup_path.exists() and seg_data.get('sanitized_text'):
                 seg_data.pop('translated_text', None)
                 seg_data.pop('synced_text', None)
@@ -4031,9 +4063,19 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     try:
                         fresh_data = safe_json_read(bkp_path)
                         if fresh_data:
-                            # Preserva campos vitais, atualiza textos
+                            # [v2026.11 FIX] Prioridade Absoluta ao Manual Edit (Não deixa o backup apagar o que o usuário escreveu)
+                            current_manual = seg.get('manual_edit_text', '').strip()
+                            fresh_manual = fresh_data.get('manual_edit_text', '').strip()
+                            
+                            # Só atualizamos se o backup tiver algo e a memória estiver vazia, ou se ambos tiverem mas o backup for novo.
+                            # Se o usuário ACABOU de editar na UI, a memória é mais nova que o backup em disco.
                             seg['sanitized_text'] = fresh_data.get('sanitized_text', seg.get('sanitized_text', ''))
-                            seg['manual_edit_text'] = fresh_data.get('manual_edit_text', seg.get('manual_edit_text', ''))
+                            
+                            if fresh_manual and not current_manual:
+                                seg['manual_edit_text'] = fresh_manual
+                            elif current_manual:
+                                # Se já tem na memória, mantemos o da memória (que veio do Clique do Usuário)
+                                pass 
                             
                             # [FIX CRÍTICO] O speaker REAL vem da pasta física (que já atualizamos no início).
                             # O backup JSON pode estar desatualizado se houve unificação.
@@ -4162,16 +4204,20 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     
                     text_to_speak = text_to_speak.replace(".", ",")
                     # [v22.10 FIX] Removido espaço forçado para evitar gaguejo inicial ("tê")
-                    if not text_to_speak.endswith(("!", "?", ",")): text_to_speak += "!"
+                    # [v2026.9 FIX] Estabilizador de Fôlego: Usamos vírgula para não confundir a IA com fim de frase
+                    if "!" in text_to_speak and text_to_speak.find("!") < 15:
+                        text_to_speak = text_to_speak.replace("!", ",", 1)
                     
                     is_shout = "!" in text_to_speak or text_to_speak.isupper()
-                    # Parâmetros calibrados para ESTABILIDADE nos jogos
+                    logging.info(f"🎙️ Dublando [{seg_data.get('speaker', 'voz')}]: '{text_to_speak}'")
+
+                    # Parâmetros recalibrados para evitar que a IA 'morra' no meio da frase
                     wav_tensor = tts_model.generate(
                         text=text_to_speak, language_id="pt", audio_prompt_path=str(ref_path),
-                        exaggeration=0.5 if is_shout else 0.2,
-                        temperature=0.8 if is_shout else 0.45, # Reduzido levemente para evitar 'alucinação emocional'
+                        exaggeration=0.32 if is_shout else 0.15, # Valor menor = mais fôlego
+                        temperature=0.72 if is_shout else 0.45,
                         min_p=0.10, 
-                        repetition_penalty=1.2 # Valor baixo evita que o modelo "invente" sons para fugir da repetição
+                        repetition_penalty=1.2 
                     )
                     import soundfile as sf
                     sf.write(str(output_path), wav_tensor.squeeze(0).cpu().numpy(), 24000)
@@ -4592,6 +4638,7 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                 
         # [MEMORY RECOVERY] Limpeza agressiva no final do Job
         import gc
+        import torch
         logging.info(" === INICIANDO LIMPEZA AGRESSIVA DE MEMÓRIA PÓS-JOB ===")
         unload_whisper_model()
         unload_chatterbox_model()
@@ -5168,7 +5215,7 @@ def resume_job(job_id):
             import App_videos
             # Direciona de volta pro motor principal de vídeos se for job de vídeo
             if "job_dublagem" in job_id:
-                 t = threading.Thread(target=App_videos.pipeline_dublagem, args=(job_dir, job_id, start_time))
+                t = threading.Thread(target=App_videos.pipeline_dublagem, args=(job_dir, job_id, start_time))
             elif "job_limpeza" in job_id:
                  t = threading.Thread(target=App_videos.pipeline_limpar_audio, args=(job_dir, job_id, start_time, status_data.get('level', 'leve')))
             else:
@@ -5208,7 +5255,38 @@ def favicon(): return make_response('', 204)
 @app.route('/uploads/<path:path>')
 def send_upload(path): return send_from_directory(app.config['UPLOAD_FOLDER'], path)
 
+# [v2026.9 FIX] Aquecimento de Motor e Patch de Emergência
+def prewarm_audio_engines():
+    try:
+        import sys
+        import types
+        import logging
+        import os
+        
+        logging.info("🔥 Iniciando Pre-warm e Proteção de Memória...")
+        
+        # [NEW] Previne o erro 'partially initialized module' garantindo a ordem global
+        import speechbrain
+        try:
+            import speechbrain.utils.quirks
+            import speechbrain.utils.importutils
+        except: pass
+
+        # [PATCH] Neutraliza o erro do SpeechBrain 1.1.0 (transducer_loss)
+        stubs = ['speechbrain.integrations.numba', 'speechbrain.integrations.numba.transducer_loss']
+        for stub in stubs:
+            if stub not in sys.modules:
+                sys.modules[stub] = types.ModuleType(stub)
+        
+        os.environ["SB_DISABLE_QUIRKS"] = "1"
+        import speechbrain.inference
+        
+        logging.info("✅ Motores blindados e prontos.")
+    except Exception as e:
+        logging.warning(f"⚠️ Aviso no Pre-warm: {e}")
+
 if __name__ == "__main__":
+    prewarm_audio_engines()
     check_ffmpeg()
     check_lm_studio()
     host, port = "0.0.0.0", 5001
