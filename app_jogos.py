@@ -3571,7 +3571,14 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
     
     try:
         set_low_process_priority()
-        def cb(p, etapa, s=None): set_progress(job_id, p, etapa, start_time, ETAPAS_JOGOS, s)
+        
+        # [CUMULATIVE TIME] Lê o tempo acumulado de sessões anteriores
+        status = safe_json_read(job_dir / "job_status.json") or {}
+        accumulated_time = status.get('total_elapsed_secs', 0)
+        # Ajusta o cronômetro para iniciar de onde parou (Puro Ouro!)
+        virtual_start_time = time.time() - accumulated_time
+        
+        def cb(p, etapa, s=None): set_progress(job_id, p, etapa, virtual_start_time, ETAPAS_JOGOS, s)
         
         for dir_name in ["_1_MOVER_OS_FICHEIROS_DAQUI", "_2_PARA_AS_PASTAS_DE_VOZ", "_backup_transcricao", "_backup_texto_final", "_dubbed_audio", "_saida_final"]:
             (job_dir / dir_name).mkdir(parents=True, exist_ok=True)
@@ -3602,6 +3609,7 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
         project_data_path = job_dir / "project_data.json"
         
         # [ALERTA DE VELOCIDADE] Verifica se a GPU está livre antes de começar
+        import torch
         if torch.cuda.is_available():
             free_m, _ = torch.cuda.mem_get_info()
             free_gb = free_m / (1024**3)
@@ -3694,7 +3702,7 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
             logging.info(f"[DEBUG] Arquivos que precisam de transcrição: {[f.name for f in files_needing_transcription]}") # [DEBUG]
             model = get_whisper_model()
             for i, audio_file in enumerate(files_needing_transcription):
-                cb(10 + (i / total_to_transcribe) * 85, 2, f"Transcrevendo: {audio_file.name}")
+                start_seg = time.time()
                 try:
                     text_result = transcribe_audio(model, str(audio_file), source_lang=source_language)
                     sample_rate, channels, _ = get_audio_metadata(str(audio_file))
@@ -3710,7 +3718,12 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     }
                     project_data.append(file_data)
                     safe_json_write(file_data, transcription_backup_dir / f"{audio_file.stem}.json")
-                except Exception as e: logging.error(f"FALHA AO TRANSCREVER {audio_file.name}: {e}")
+                except Exception as e: 
+                    logging.error(f"FALHA AO TRANSCREVER {audio_file.name}: {e}")
+                finally:
+                    seg_time = time.time() - start_seg
+                    now_str = time.strftime("%H:%M:%S")
+                    cb(10 + (i / total_to_transcribe) * 85, 2, f"[{now_str}] Transcrevendo: {audio_file.name} ({seg_time:.1f}s)")
             project_data.sort(key=lambda x: x.get('id', ''))
         
 
@@ -3776,7 +3789,7 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
         files_to_copy_directly = []
 
         for seg_data in project_data:
-            # [FIX] Se já foi marcado como "Não-Verbal", PULA. Não precisa de texto sanitizado.
+            # [FIX] Se já foi marcado como "Não-Verbal", PULA.
             if seg_data.get('processing_status') == 'Copiado Diretamente (Som Não-Verbal)':
                 continue
 
@@ -3891,11 +3904,9 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     f['synced_text'] = f['manual_edit_text']
                     f['sanitized_text'] = gema_etapa_3_sanitizacao(f['manual_edit_text'])
                     f['_usar_cache'] = True
-                    logging.info(f"Usando Edição Manual para '{f['id']}': {f['manual_edit_text'][:40]}...")
                     continue
 
-                # [PRIORIDADE 2] Cache Granular (Pasta _backup_texto_final)
-                # Se o arquivo individual .json existir, carregamos ele.
+                # [PRIORIDADE 2] Cache Granular
                 individual_json = backup_texto_dir / f"{f['id']}.json"
                 if individual_json.exists():
                     saved_data = safe_json_read(individual_json)
@@ -3904,8 +3915,7 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                         f['_usar_cache'] = True
                         continue
 
-                # [PRIORIDADE 3] Repetição Interna (Micro-Cache do Projeto)
-                # Se a mesma frase já foi traduzida neste mesmo Job antes.
+                # [PRIORIDADE 3] Repetição Interna
                 if orig_txt in micro_cache or orig_txt.lower() in micro_cache:
                     f['_usar_cache_da_fila'] = True
                     continue
@@ -3927,6 +3937,7 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
             
             def worker_traducao(idx, item_data):
                 nonlocal completed_atomic
+                start_seg = time.time()
                 try:
                     # 1. Constrói Janela de Contexto Equilibrada (3 antes, 3 depois - Sprint Mode para i5)
                     # Reduzido de 10 para 3 para acelerar o 'Prefill' da CPU (menos texto para o i5 ler antes de traduzir).
@@ -3973,7 +3984,13 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     logging.error(f"Falha atômica no item {idx}: {ex_atomic}")
                 finally:
                     completed_atomic += 1
-                    cb((completed_atomic / total_items) * 100, 3, f"Traduzindo: {completed_atomic}/{total_items}...")
+                    seg_time = time.time() - start_seg
+                    now_str = time.strftime("%H:%M:%S")
+                    
+                    # Recibo limpo no terminal (como o Alexandre sugeriu)
+                    logging.info(f"   ✅ [{now_str}] Segmento {idx} finalizado ({seg_time:.1f}s)")
+                    
+                    cb((completed_atomic / total_items) * 100, 3, f"[{now_str}] Traduzindo: {completed_atomic}/{total_items} ({seg_time:.1f}s)...")
 
             # Disparo em Paralelo (3 threads para 4-core i5 / 10 para GPU)
             # Deixa sempre 1 núcleo livre para o sistema não travar.
@@ -4125,7 +4142,6 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
             print(" Se o PC ficar lento, feche o LM Studio para dar mais fôlego à voz.")
             print("-"*70 + "\n")
             cb(100, 5, "Tradução concluída. Continuando processo em modo CPU...")
-            import time # Importação local para evitar conflito com variáveis de nome 'time'
             time.sleep(3) # Apenas 3 segundos para você ler a dica e ele segue sozinho!
 
 
@@ -4170,10 +4186,11 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
             if tts_model is None: raise RuntimeError("Motor TTS indisponível.")
 
             global_fallback = Path("resources/base_speakers/pt/default_pt_speaker.wav")
+            total_gen = len(actual_generation_queue)
             for i, seg_data in enumerate(actual_generation_queue):
+                start_seg = time.time()
                 output_path = dubbed_audio_dir / f"{seg_data['id']}_dubbed.wav"
-                perc_total = 5 + (i / len(actual_generation_queue)) * 95
-                cb(perc_total, 6, f"Gerando {i+1}/{len(actual_generation_queue)}: {seg_data['id']}")
+                perc_total = 5 + (i / total_gen) * 95
                 
                 ref_path = diarization_dir / seg_data.get('speaker', 'Unknown') / "_REF_VOZ_UNIFICADA.wav"
                 if not ref_path.exists():
@@ -4222,9 +4239,8 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     import soundfile as sf
                     sf.write(str(output_path), wav_tensor.squeeze(0).cpu().numpy(), 24000)
 
-                    # [v22.30] SOFT CLEANUP (Rotina Ultra-Segura)
                     try:
-                        import time
+                        # [v22.30] SOFT CLEANUP (Rotina Ultra-Segura)
                         time.sleep(0.1) # Pequeno delay para garantir que o arquivo foi liberado pelo SO
                         from pydub import AudioSegment
                         from pydub.silence import detect_nonsilent
@@ -4243,6 +4259,10 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                     except Exception as clean_err:
                         # Se a limpeza falhar por qualquer motivo, o áudio original continua existindo, então ignoramos o erro
                         pass
+                    finally:
+                        seg_time = time.time() - start_seg
+                        now_str = time.strftime("%H:%M:%S")
+                        cb(perc_total, 6, f"[{now_str}] Gerando {i+1}/{total_gen}: {seg_data['id']} ({seg_time:.1f}s)")
 
                 except Exception as e:
                     import traceback
@@ -4598,7 +4618,6 @@ def processar_dublagem_jogos(job_dir, job_id, start_time):
                 
                 # Limpeza: Move fragmentos para backup e apaga lista
                 if concat_success:
-                    import time
                     
                     for _, seg_path, _ in segments:
                         if seg_path.exists():
@@ -5294,14 +5313,13 @@ if __name__ == "__main__":
     import logging
     logging.getLogger('werkzeug').setLevel(logging.ERROR)
     def open_browser():
-        import time
         time.sleep(1.5)
         import webbrowser
         webbrowser.open_new(url)
     import threading
     threading.Thread(target=open_browser).start()
     print("\n" + "="*80)
-    print(f"Servidor NEXUS (Dublagem de Jogos) iniciado.")
+    print(f"Servidor NEXUS (Dublagem de Jogos) [v0.09] iniciado.")
     print(f"Acesse a aplicação em: {url}")
     print("O progresso detalhado de todos os jobs será exibido aqui no CMD.")
     print("="*80 + "\n")
