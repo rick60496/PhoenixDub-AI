@@ -6,20 +6,19 @@
 
 ## Português
 
-**PhoenixDub AI** é um pipeline de dublagem automatizada de nível profissional, projetado para alta precisão, fluxo natural e extrema resiliência. Sincroniza vídeos e jogos em Português (PT-BR) usando IAs de última geração.
+**PhoenixDub AI** é uma solução completa de **edição de vídeo e dublagem automatizada** de nível profissional. Projetado para alta precisão, fluxo natural e extrema resiliência, o PhoenixDub utiliza IAs de última geração para processar, editar e sincronizar vídeos e jogos em Português (PT-BR) de forma inteligente.
 
 > [!IMPORTANTE]
-> **COMPATIBILIDADE DE HARDWARE**:
-> - **Processador**: Otimizado para **Intel** (6ª geração ou superior).
-> - **Placa de Vídeo**: Recomendado **NVIDIA RTX 2060** (6GB) para o "Modo Turbo".
+> - **Processador**: Otimizado para **Intel** (6ª geração ou superior). Compatibilidade total para rodar apenas no processador.
+> - **Placa de Vídeo**: Recomendado **NVIDIA RTX 2060** (6GB) para o "Modo Turbo". A placa de vídeo entrega muito mais velocidade, mas o sistema funciona 100% apenas com o processador.
 > - **Memória**: Mínimo 16 GB de RAM.
 
-### 🌟 O que há de novo na Versão 2026 (Phoenix STABLE)
+### 🌟 O que há de novo na Versão 0.09 (PHOENIX-STABLE-TIME)
+*   **Edição de Vídeo com IA**: O motor `App_videos` agora conta com o **Magic Cut**, que remove silências e falhas de gravação automaticamente via IA.
+*   **Odômetro de Tempo Persistente**: O sistema agora salva e retoma o tempo real de processamento do projeto entre sessões.
+*   **Painel de Tempo Real**: Relógio de parede e cronômetros individuais em todas as etapas de IA (Whisper, Gema, Chatterbox).
 *   **Motor Dual Chatterbox (ONNX + Torch)**: Suporte a aceleração ONNX para GPUs RTX e CPUs antigas.
-*   **Setup Inteligente**: Instalador `setup.py` que detecta drivers e componentes faltantes.
 *   **Conexão LM Studio**: Tradução via Gemma 4 (Host Local) para evitar falhas de API externa.
-
----
 
 ### 🚀 Tutorial de Instalação (Passo a Passo)
 
@@ -88,17 +87,18 @@ Para conhecer todas as pessoas e tecnologias envolvidas no PhoenixDub, veja o ar
 
 ## English
 
-**PhoenixDub AI** is a professional-grade automated dubbing pipeline designed for high precision, natural flow, and extreme resilience. It synchronizes videos and games into Portuguese (PT-BR) using state-of-the-art AI.
+**PhoenixDub AI** is a complete **AI Video Editing and automated dubbing** solution for professional-grade media projects. Designed for high precision and natural flow, it uses state-of-the-art AI to edit and synchronize videos and games into Portuguese (PT-BR).
 
 > [!IMPORTANT]
-> **HARDWARE COMPATIBILITY**:
-> - **Processor**: Optimized for **Intel** (6th Gen or newer).
-> - **Video Card**: **NVIDIA RTX 2060** (6GB) recommended for "Turbo Mode".
+> - **Processor**: Optimized for **Intel** (6th Gen or newer). Full compatibility to run on the processor alone.
+> - **Video Card**: **NVIDIA RTX 2060** (6GB) recommended for "Turbo Mode". A video card provides much higher speeds, but the system is 100% functional on the processor alone.
 > - **Memory**: Minimum 16 GB RAM.
 
-### 🌟 What's New in 2026 (Phoenix STABLE)
+### 🌟 What's New in 2026.09 (PHOENIX-STABLE-TIME)
+*   **AI Video Editing**: The `App_videos` engine now features **Magic Cut**, automatically removing silences and recording errors.
+*   **Persistent Project Odometer**: The system now saves and resumes total processing time across sessions.
+*   **Real-Time Time Dashboard**: Integrated wall clock and per-segment timers for all AI stages.
 *   **Dual Chatterbox Engine (ONNX + Torch)**: ONNX acceleration support for RTX GPUs and legacy CPUs.
-*   **Smart Setup**: `setup.py` installer that detects drivers and missing components.
 *   **LM Studio Integration**: Translation via Gemma 4 (Local Host) to avoid external API failures.
 
 ---
