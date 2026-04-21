@@ -1272,26 +1272,36 @@ def unload_whisper_model():
 def get_optimal_device():
     import logging
     import torch
+    
+    # 1. Tenta NVIDIA (CUDA) ou AMD (ROCm/HIP em alguns sistemas)
     if torch.cuda.is_available() and torch.cuda.device_count() > 0:
         try:
             device_idx = torch.cuda.current_device()
-            # Pega memória livre e total em bytes
+            # Pega memória livre e total para evitar crash
             free_m, total_m = torch.cuda.mem_get_info()
             free_vram_gb = free_m / (1024**3)
             total_vram_gb = total_m / (1024**3)
 
-            # TRAVA INTELIGENTE: Baixei para 800MB para ser mais permissivo em placas de 6GB
+            # TRAVA DE SEGURANÇA: Se tiver menos de 800MB livres, vai pra CPU pra não crashar o PC
             if free_vram_gb < 0.8:
-                logging.warning(f"⚠️ [ALERTA DE HARDWARE] A placa de vídeo está quase cheia ({free_vram_gb:.1f}GB livres).")
-                logging.warning("🔥 PARA VELOCIDADE MÁXIMA: Feche o LM Studio ou outros jogos antes de dublar.")
-                logging.warning("Forçando modo CPU (Lento) para evitar crash por falta de memória...")
+                logging.warning(f"⚠️ [VRAM BAIXA] Apenas {free_vram_gb:.1f}GB livres. Usando CPU para segurança.")
                 return "cpu"
             
-            if total_vram_gb >= 2.0: # Baixei de 3.5 para 2.0 para aceitar placas de entrada
-                logging.info(f"🚀 [RTX DETECTADA] Usando GPU NVIDIA ({free_vram_gb:.1f}GB livres).")
+            if total_vram_gb >= 2.0:
+                logging.info(f"🚀 [GPU ATIVA] Usando Aceleração por Hardware ({free_vram_gb:.1f}GB livres).")
                 return f"cuda:{device_idx}"
-        except Exception as e:
-            logging.warning(f"⚠️ Erro ao checar VRAM: {e}. Usando CPU.")
+        except:
+            return "cuda:0" # Fallback para o primeiro dispositivo de vídeo
+
+    # 2. Tenta Apple Silicon (Mac M1/M2/M3)
+    try:
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            logging.info("🍎 [APPLE SILICON] Usando acelerador MPS.")
+            return "mps"
+    except: pass
+
+    # 3. Fallback Universal: Processador
+    logging.info("💻 [MODO CPU] Nenhum acelerador compatível detectado ou memória insuficiente.")
     return "cpu"
 
 def get_chatterbox_model():
@@ -2374,16 +2384,20 @@ def check_lm_studio_placeholder():
 
 def clean_ai_translation(text, original_text):
     """
-    [v20.0 EXTRAÇÃO POR ASPAS (SUGESTÃO DO USUÁRIO)]
-    Pesca a tradução baseada na última ocorrência de aspas duplas.
-    Isso ignora completamente formatos como "Inglês" -> "Português".
+    [v21.0 SCRUBBER DE PENSAMENTO] 
+    Limpa blocos de raciocínio interno da Gema 4 antes de extrair a tradução.
     """
     if not text: return ""
     
-    # 1. PESCARIA DE ASPAS (A SOLUÇÃO DEFINITIVA)
-    # Se existirem aspas no texto (ex: "Inglês" -> "Português")
+    # 1. SCRUBBER: Remove blocos de pensamento <|channel>thought ... <channel|>
+    # Ou qualquer coisa entre tags de pensamento comuns
+    import re
+    text = re.sub(r'<\|channel\|?>thought.*?<channel\|?>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<thought>.*?</thought>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'\[THOUGHT\].*?\[/THOUGHT\]', '', text, flags=re.DOTALL | re.IGNORECASE)
+    
+    # 2. PESCARIA DE ASPAS (A SOLUÇÃO DEFINITIVA)
     if text.count('"') >= 2:
-        import re
         # Pega tudo que está entre aspas
         textos_entre_aspas = re.findall(r'"([^"]*)"', text)
         if textos_entre_aspas:
@@ -2433,7 +2447,7 @@ def clean_ai_translation(text, original_text):
 
     return t
 
-def make_gema_request_with_retries(payload, timeout=3600, retries=5, backoff_factor=2, is_translation=True):
+def make_gema_request_with_retries(payload, timeout=300, retries=5, backoff_factor=2, is_translation=True):
     """
     [v22.70 MULTI-MODO]
     Prioriza o LM Studio via HTTP. Se falhar, usa o motor local llama-cpp.
@@ -2443,7 +2457,7 @@ def make_gema_request_with_retries(payload, timeout=3600, retries=5, backoff_fac
     # --- TENTATIVA 1: LM STUDIO (RECOMENDADO PARA GEMMA 4) ---
     url = "http://127.0.0.1:1234/v1/chat/completions"
     try:
-        res = requests.post(url, json=payload, timeout=60)
+        res = requests.post(url, json=payload, timeout=timeout)
         if res.status_code == 200:
             return res # Retorna o objeto original do requests
     except:
@@ -2534,7 +2548,7 @@ meu_id_01: "Sua traducao brilhante OBRIGATORIAMENTE PT-BR aqui"
 
     payload = {
         "messages": [
-            {"role": "system", "content": "<|think|>\nFocarei na emoção e na naturalidade perfeita para PT-BR. Retornarei apenas o formato ID: \"tradução livre e fluida\"."},
+            {"role": "system", "content": "Você é um Diretor de Localização. Retorne APENAS o formato ID: \"tradução natural para PT-BR\"."},
             {"role": "user", "content": prompt}
         ], 
         "temperature": 0.3, "max_tokens": 4096
@@ -2705,7 +2719,7 @@ Responda APENAS com a versao corrigida, natural e dentro do tempo. Use aspas dup
     try:
         payload = {
             "messages": [
-                {"role": "system", "content": "<|think|>\nVocê é um Diretor de Localização. Responda apenas o texto corrigido entre aspas. Proibido conversar."},
+                {"role": "system", "content": "Você é um Diretor de Localização. Responda apenas o texto corrigido entre aspas. Proibido conversar."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.3,
@@ -2715,11 +2729,9 @@ Responda APENAS com a versao corrigida, natural e dentro do tempo. Use aspas dup
         response = make_gema_request_with_retries(payload, is_translation=False)
         content = response.json()['choices'][0]['message']['content'].strip()
         
-        quoted_match = re.search(r'"(.*?)"', content, re.DOTALL)
-        if quoted_match:
-             return quoted_match.group(1).strip()
-        
-        return current_translation # Fallback se a IA falhar na correção
+        # [v21.0] Usa a limpeza padrão para evitar vazamento de 'thought'
+        final_text = clean_ai_translation(content, original_text)
+        return final_text
         
     except Exception as e:
         logging.error(f"Erro no Agente de Correção Master: {e}")
@@ -2758,7 +2770,7 @@ id_01: "Essa e a versao limpa e corrigida!"
     try:
         payload = {
             "messages": [
-                {"role": "system", "content": "<|think|>\nVocê é um Corretor de Dublagem. Responda apenas o ID e o texto entre aspas. Proibido conversar."},
+                {"role": "system", "content": "Você é um Corretor de Dublagem. Responda apenas o ID e o texto entre aspas. Proibido conversar."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.2, "max_tokens": 2048
@@ -2930,7 +2942,7 @@ Responda APENAS com a nova traducao resumida e perfeita. Nenhuma palavra de expl
 
     payload = {
         "messages": [
-            {"role": "system", "content": "<|think|>\nO texto não cabe! Adaptando, resumindo e retornando só a versão PT-BR reescrita e ultra-condensada dentro de aspas."},
+            {"role": "system", "content": "O texto não cabe! Adaptando, resumindo e retornando só a versão PT-BR reescrita e ultra-condensada dentro de aspas."},
             {"role": "user", "content": prompt}
         ],
         "temperature": 0.2, # Um pouco mais de criatividade para resumir

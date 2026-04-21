@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Studio - Production Suite</title>
+    <title>Nexus Studio - Production Suite</title>
     <!-- Fonts & Icons -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link
@@ -402,7 +402,7 @@
         style="position:fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:9999; display:flex; align-items:center; justify-content:center; animation: fadeOut 1s ease-in-out 2s forwards; pointer-events:none;">
         <h1
             style="color:#e50914; font-size:4rem; font-weight:800; letter-spacing:4px; animation: zoomIn 2s ease-out forwards;">
-            AI STUDIO</h1>
+            NEXUS STUDIO</h1>
     </div>
     <style>
         @keyframes fadeOut {
@@ -426,7 +426,7 @@
 
     <!-- Header -->
     <div class="header">
-        <div class="logo">AI STUDIO <span style="font-size:0.8rem; color:#666; vertical-align:middle;">v3.0</span></div>
+        <div class="logo">NEXUS STUDIO <span style="font-size:0.8rem; color:#666; vertical-align:middle;">v3.1</span></div>
     </div>
 
     <!-- Hero -->
@@ -475,14 +475,15 @@
                 </div>
             </div>
 
-            <!-- Card 3: Podcast -->
-            <div class="tool-card" onclick="openTool('podcast')">
-                <div class="card-bg-icon"><i class="fas fa-podcast"></i></div>
+            <!-- Card 3: Shorts Maker -->
+            <div class="tool-card" style="border-color: rgba(251, 191, 36, 0.4);" onclick="openTool('shorts')">
+                <div class="card-bg-icon" style="color:#fbbf24;"><i class="fas fa-bolt"></i></div>
                 <div class="card-content">
-                    <div class="tool-title"><i class="fas fa-rss"></i> Podcast Maker</div>
-                    <div class="tool-desc">Transforme texto ou PDF em áudio conversacional.</div>
+                    <div class="tool-title" style="color:#fbbf24;"><i class="fas fa-bolt"></i> Shorts Maker IA</div>
+                    <div class="tool-desc">Crie montagens verticais (TikTok) com fotos e música automaticamente.</div>
                 </div>
             </div>
+
 
             <!-- Card 4: Transcrição (NOVO) -->
             <div class="tool-card" onclick="openTool('transcription')">
@@ -493,7 +494,16 @@
                 </div>
             </div>
 
-            <!-- Card 5: Clean Editor (NOVO) -->
+            <!-- Card 5: Magic Cut IA (NOVO) -->
+            <div class="tool-card" style="border-color: rgba(16, 185, 129, 0.4);" onclick="openTool('magic_cut')">
+                <div class="card-bg-icon" style="color:#10b981;"><i class="fas fa-wand-magic-sparkles"></i></div>
+                <div class="card-content">
+                    <div class="tool-title" style="color:#10b981;"><i class="fas fa-bolt-lightning"></i> Magic Cut IA</div>
+                    <div class="tool-desc">Corte silêncios e erros de gravação automaticamente com um clique.</div>
+                </div>
+            </div>
+
+            <!-- Card 6: Clean Editor -->
             <div class="tool-card" style="border-color: rgba(229, 9, 20, 0.4);" onclick="openTool('clean_editor')">
                 <div class="card-bg-icon" style="color:#e50914;"><i class="fas fa-magic"></i></div>
                 <div class="card-content">
@@ -569,15 +579,69 @@
                 renderDubbingForm();
             } else if (type === 'cut') {
                 renderCutForm();
-            } else if (type === 'podcast') {
-                renderPodcastForm();
             } else if (type === 'game') {
                 renderGameForm();
+            } else if (type === 'magic_cut') {
+                renderMagicCutForm();
+            } else if (type === 'shorts') {
+                renderShortsForm();
             } else if (type === 'transcription') {
                 renderTranscriptionForm();
             } else if (type === 'clean_editor') {
                 renderCleanEditorForm();
             }
+        }
+
+        // --- NEW: MAGIC CUT FORM ---
+        function renderMagicCutForm() {
+            iconContainer.className = 'fas fa-wand-magic-sparkles';
+            headerBg.style.background = 'linear-gradient(to right, #059669, #047857)'; // Greenish
+
+            mount.innerHTML = `
+                <h2 style="margin-bottom:10px;">Magic Cut IA</h2>
+                <p style="color:#888; margin-bottom:20px; font-size:0.9rem;">O "Botão Mágico" para quem grava vídeos. Remove o que não presta.</p>
+                
+                <form id="mc-form">
+                    <label>Selecione seu Vídeo Bruto (Raw)</label>
+                    <input type="file" id="mc-file" accept="video/*" required>
+
+                    <div style="background:#27272a; padding:15px; border-radius:6px; margin-top:15px; border:1px solid #3f3f46;">
+                        <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                            <input type="checkbox" id="mc-silence" checked style="width:18px; height:18px; margin:0;">
+                            <label for="mc-silence" style="margin:0; color:#fff; cursor:pointer;">Remover Silêncios (Jump Cuts)</label>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                            <input type="checkbox" id="mc-errors" style="width:18px; height:18px; margin:0;">
+                            <label for="mc-errors" style="margin:0; color:#fff; cursor:pointer;">Remover Erros e Repetições (IA)</label>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <input type="checkbox" id="mc-bg" checked style="width:18px; height:18px; margin:0;">
+                            <label for="mc-bg" style="margin:0; color:#fff; cursor:pointer;">Auto-Normalizar Áudio (Compressão)</label>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="primary-btn" id="mc-btn" style="background:#10b981;">
+                        <i class="fas fa-bolt"></i> Iniciar Edição Mágica
+                    </button>
+                    
+                    <div id="status-msg" style="margin-top:15px;"></div>
+                </form>
+            `;
+
+            document.getElementById('mc-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const fd = new FormData();
+                fd.append('video_file', document.getElementById('mc-file').files[0]);
+                fd.append('remove_silence', document.getElementById('mc-silence').checked);
+                fd.append('remove_errors', document.getElementById('mc-errors').checked);
+                fd.append('normalize', document.getElementById('mc-bg').checked);
+
+                showLoading("O Mágico está trabalhando no seu vídeo...");
+                try {
+                    const res = await fetch('/api/magic_cut/start', { method: 'POST', body: fd });
+                    showResult(await res.json());
+                } catch (err) { showResult({ error: err.message }); }
+            };
         }
 
         // 0. CLEAN EDITOR FORM
@@ -797,8 +861,8 @@
                 <p style="color:#888; margin-bottom:20px; font-size:0.9rem;">Ideal para filmes e vídeos curtos.</p>
                 
                 <form id="dub-form">
-                    <label>Arquivo de Vídeo (MP4)</label>
-                    <input type="file" id="d-file" accept=".mp4" required>
+                    <label>Arquivo de Vídeo (MP4, MKV, MOV...)</label>
+                    <input type="file" id="d-file" accept="video/*" required>
 
                     <!-- SELEÇÃO DE IDIOMAS (NOVO) -->
                     <div style="display:flex; gap:10px; flex-wrap: wrap;">
@@ -862,8 +926,8 @@
                 <p style="color:#888; margin-bottom:20px; font-size:0.9rem;">Diarização e sincronia para pastas de áudio.</p>
                 
                 <form id="game-form">
-                    <label>Arquivos (.wav ou .zip)</label>
-                    <input type="file" id="g-files" accept=".wav, .zip" multiple required>
+                    <label>Arquivos (Áudio ou .ZIP)</label>
+                    <input type="file" id="g-files" accept="audio/*, .zip" multiple required>
                     <div id="zip-warn" style="color:#ef4444; font-size:0.8rem; margin-top:5px; display:none;">
                         <i class="fas fa-exclamation-triangle"></i> Acima de 500 arquivos, use ZIP.
                     </div>
@@ -957,6 +1021,7 @@
                 fd.append('origem', document.getElementById('g-lang-src').value);
                 fd.append('destino', document.getElementById('g-lang').value);
                 fd.append('game_profile', document.getElementById('g-game-profile').value);
+                fd.append('glossary', document.getElementById('g-gloss').value);
 
                 // Show Loading
                 showLoading("Enviando arquivos...");
@@ -1042,30 +1107,6 @@
             };
         }
 
-        // 4. PODCAST FORM
-        function renderPodcastForm() {
-            iconContainer.className = 'fas fa-podcast';
-            headerBg.style.background = 'linear-gradient(to right, #7c3aed, #6d28d9)'; // Violet
-
-            mount.innerHTML = `
-                <h2 style="margin-bottom:10px;">Podcast Studio</h2>
-                
-                <form id="pod-form">
-                    <label>Arquivo de Texto/PDF</label>
-                    <input type="file" id="p-file" accept=".txt,.pdf">
-                    <label>Ou cole o texto:</label>
-                    <textarea id="p-text" rows="4"></textarea>
-
-                    <button type="submit" class="primary-btn">Gerar Episódio</button>
-                    <div id="status-msg" style="margin-top:10px;"></div>
-                </form>
-            `;
-            // (Placeholder logic as backend wasn't fully detailed in logs, using generic structure)
-            document.getElementById('pod-form').onsubmit = (e) => {
-                e.preventDefault();
-                alert("Funcionalidade em desenvolvimento!");
-            };
-        }
 
 
         // --- UTILS ---
@@ -1161,8 +1202,8 @@
                             </div>
                             <div style="font-size:0.8rem; color:#ccc; margin-top:4px;">
                                 ${job.etapa || 'Processando...'} <br>
-                                <span style="font-size:0.7rem; color:#fbbf24;"><i class="fas fa-clock"></i> Tempo gasto na dublagem: <b>${job.tempo_decorrido || 'Desconhecido'}</b></span><br>
-                                <span style="font-size:0.75rem; color:#10b981;"><i class="fas fa-file-audio"></i> Dublando <b>${job.duracao_total_formatada || '? m'}</b> de áudios.</span>
+                                <span style="font-size:0.7rem; color:#fbbf24;"><i class="fas fa-clock"></i> Tempo gasto no projeto: <b>${job.tempo_decorrido || 'Desconhecido'}</b></span><br>
+                                <span style="font-size:0.75rem; color:#10b981;"><i class="fas fa-layer-group"></i> Duração Base: <b>${job.duracao_total_formatada || '? m'}</b> de mídia.</span>
                             </div>
                             
                             <!-- Progress Bar -->
@@ -1226,7 +1267,7 @@
                     <div id="mon-step" style="color:#aaa; font-size:0.9rem;">Clique em Continuar para retomar</div>
                     <div style="display:flex; justify-content: space-between; margin-top:10px;">
                         <span style="color:#888; font-size:0.8rem;"><i class="fas fa-clock"></i> Tempo Processando: <b id="mon-time" style="color:#fbbf24;">00:00:00</b></span>
-                        <span style="color:#888; font-size:0.8rem;"><i class="fas fa-file-audio"></i> Dublando: <b id="mon-duration" style="color:#10b981;">--</b></span>
+                        <span style="color:#888; font-size:0.8rem;"><i class="fas fa-layer-group"></i> Mídia Base: <b id="mon-duration" style="color:#10b981;">--</b></span>
                     </div>
 
                     <div style="background:#333; height:10px; border-radius:5px; margin-top:15px; overflow:hidden;">
@@ -1441,7 +1482,7 @@
                 
                 <form id="transcription-form">
                     <label>Selecione o Arquivo</label>
-                    <input type="file" id="t-file" accept=".mp3,.wav,.mp4,.mkv,.ogg,.flac,.mpeg" required style="padding: 20px; border: 2px dashed #4b5563; text-align: center;">
+                    <input type="file" id="t-file" accept="audio/*, video/*" required style="padding: 20px; border: 2px dashed #4b5563; text-align: center;">
 
                     <button type="submit" class="primary-btn" style="background:#4b5563;">
                         <i class="fas fa-magic"></i> Iniciar Transcrição
@@ -1497,6 +1538,120 @@
                     console.error(err);
                     statusDiv.textContent = "Erro de conexão com o servidor.";
                     statusDiv.style.color = "#ef4444";
+                }
+            };
+        }
+        // 6. SHORTS MAKER FORM
+        function renderShortsForm() {
+            iconContainer.className = 'fas fa-bolt';
+            headerBg.style.background = 'linear-gradient(to right, #fbbf24, #d97706)'; // Yellow/Gold
+
+            mount.innerHTML = `
+                <h2 style="margin-bottom:10px;">Shorts Maker IA</h2>
+                <p style="color:#888; margin-bottom:20px; font-size:0.9rem;">Crie montagens verticais cinematográficas automaticamente.</p>
+                
+                <form id="shorts-form">
+                    <label>Escolha o Lote de Fotos (Selecionar múltiplas)</label>
+                    <input type="file" id="s-photos" accept="image/*" multiple required>
+
+                    <label>Música de Fundo (Áudio ou Vídeo)</label>
+                    <input type="file" id="s-music" accept="audio/*,video/*" required>
+                    
+                    <div style="display:flex; gap:10px; margin-top:10px;">
+                        <div style="flex:1">
+                            <label>Orientação do Vídeo:</label>
+                            <select id="s-orientation">
+                                <option value="vertical" selected>📱 Vertical (Shorts/TikTok)</option>
+                                <option value="horizontal">📺 Horizontal (YouTube/PC)</option>
+                            </select>
+                        </div>
+                        <div style="flex:1">
+                            <label>Efeito de Movimento:</label>
+                            <select id="s-style">
+                                <option value="random">🤖 Automático (IA Decide)</option>
+                                <option value="zoom_in">🎬 Zoom In (Aproximação)</option>
+                                <option value="zoom_out">🔍 Zoom Out (Afastamento)</option>
+                                <option value="pan_right">➡️ Deslizar Direita</option>
+                                <option value="pan_left">⬅️ Deslizar Esquerda</option>
+                                <option value="pan_up">⬆️ Deslizar Cima</option>
+                                <option value="pan_down">⬇️ Deslizar Baixo</option>
+                                <option value="3d_tilt">🌐 3D Zoom (Profissional)</option>
+                                <option value="vibe">📱 Vibe IA (Dinâmico)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <label>Estilo Visual (Filtro):</label>
+                    <select id="s-filter">
+                        <option value="random">🤖 Automático (IA Decide)</option>
+                        <option value="none" selected>Nenhum</option>
+                        <option value="vhs">🎞️ Vintage VHS (Retro)</option>
+                        <option value="cinema">🎬 Cinema Retro (Poeira/Grão)</option>
+                        <option value="light_leak">✨ Light Leak (Aura de Luz)</option>
+                        <option value="vivid">🎨 Cores Vivas (Boost)</option>
+                    </select>
+
+                    <button type="submit" class="primary-btn" style="background:#fbbf24; color:black;">
+                        <i class="fas fa-magic"></i> Gerar Vídeo Master
+                    </button>
+                    
+                    <div id="s-status" style="margin-top:15px; font-size:0.9rem; min-height:20px;"></div>
+                </form>
+                
+                <div id="s-result" style="display:none; text-align:center; padding:20px;">
+                    <i class="fas fa-check-circle" style="font-size:3.5rem; color:#10b981; margin-bottom:10px;"></i>
+                    <h3 style="color:#10b981;">Vídeo Gerado com Sucesso!</h3>
+                    <a id="s-download" href="#" class="primary-btn" style="text-decoration:none; display:inline-block; margin-top:15px; background:#10b981;" download>
+                         <i class="fas fa-download"></i> Baixar MP4
+                    </a>
+                </div>
+            `;
+
+            document.getElementById('shorts-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const photos = document.getElementById('s-photos').files;
+                const music = document.getElementById('s-music').files[0];
+                const style = document.getElementById('s-style').value;
+                const filter = document.getElementById('s-filter').value;
+                const orientation = document.getElementById('s-orientation').value;
+                const statusDiv = document.getElementById('s-status');
+
+                if (photos.length === 0 || !music) return;
+
+                const formData = new FormData();
+                for (let i = 0; i < photos.length; i++) {
+                    formData.append('photos', photos[i]);
+                }
+                formData.append('music', music);
+                formData.append('style', style);
+                formData.append('filter', filter);
+                formData.append('orientation', orientation);
+
+                statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processando fotos e mixando áudio...';
+                statusDiv.style.color = "#fbbf24";
+                document.getElementById('shorts-form').style.display = 'none';
+
+                try {
+                    const response = await fetch('/criar_shorts_ia', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const data = await response.json();
+                    if (data.status === 'success' || data.final_file) {
+                        statusDiv.style.display = 'none';
+                        document.getElementById('s-result').style.display = 'block';
+                        document.getElementById('s-download').href = data.final_file;
+                    } else {
+                        statusDiv.textContent = "Erro: " + (data.error || "Falha técnica");
+                        statusDiv.style.color = "#ef4444";
+                        document.getElementById('shorts-form').style.display = 'block';
+                    }
+                } catch (err) {
+                    console.error(err);
+                    statusDiv.innerHTML = `<i class="fas fa-times"></i> Erro de conexão com o servidor.`;
+                    statusDiv.style.color = "#ef4444";
+                    document.getElementById('shorts-form').style.display = 'block';
                 }
             };
         }
