@@ -4,6 +4,11 @@
 
 ---
 
+### 🗨️ Participe da nossa Comunidade! / Join our Community!
+**Queremos ouvir você!** Se você baixou o projeto, por favor, deixe seu feedback, sugestões ou poste seus resultados na nossa aba de [**Discussões (Discussions)**](https://github.com/rick60496/PhoenixDub-AI/discussions). Sua opinião é fundamental para a evolução do PhoenixDub!
+
+---
+
 ## Português
 
 **PhoenixDub AI** é uma solução completa de **edição de vídeo e dublagem automatizada** de nível profissional. Projetado para alta precisão, fluxo natural e extrema resiliência, o PhoenixDub utiliza IAs de última geração para processar, editar e sincronizar vídeos e jogos em Português (PT-BR) de forma inteligente.
@@ -13,12 +18,12 @@
 > - **Placa de Vídeo**: Recomendado **NVIDIA RTX 2060** (6GB) para o "Modo Turbo". A placa de vídeo entrega muito mais velocidade, mas o sistema funciona 100% apenas com o processador.
 > - **Memória**: Mínimo 16 GB de RAM.
 
-### 🌟 O que há de novo na Versão 0.09 (PHOENIX-STABLE-TIME)
-*   **Edição de Vídeo com IA**: O motor `App_videos` agora conta com o **Magic Cut**, que remove silências e falhas de gravação automaticamente via IA.
-*   **Odômetro de Tempo Persistente**: O sistema agora salva e retoma o tempo real de processamento do projeto entre sessões.
-*   **Painel de Tempo Real**: Relógio de parede e cronômetros individuais em todas as etapas de IA (Whisper, Gema, Chatterbox).
-*   **Motor Dual Chatterbox (ONNX + Torch)**: Suporte a aceleração ONNX para GPUs RTX e CPUs antigas.
-*   **Conexão LM Studio**: Tradução via Gemma 4 (Host Local) para evitar falhas de API externa.
+### 🌟 O que há de novo na Versão 0.10 (TURBO-PATCH-UNLEASHED)
+*   **Modo Turbo Ativado**: Desativamos o raciocínio interno da IA para aumentar a velocidade em até 10x em CPUs i5/i7.
+*   **Universal Hardware Support**: Detecção inteligente e automática de NVIDIA (CUDA), AMD (ROCm), Apple (MPS) e CPU.
+*   **AI Video Editing**: O motor `App_videos` agora conta com o **Magic Cut**, que remove silências e falhas de gravação automaticamente via IA.
+*   **Thinking Scrubber**: Filtro que elimina "vazamentos" de pensamentos da IA nas traduções.
+*   **Web Interface Auto-Detect**: Opções de idioma e vozes agora começam em "Auto-Detectar" por padrão.
 
 ### 🚀 Tutorial de Instalação (Passo a Passo)
 
@@ -47,6 +52,23 @@ python setup.py
 *   **Opção [ 2 ] (MODO TURBO/RTX)**: Use se você tiver uma placa NVIDIA RTX.
 *   **Opção [ 3 ] (MODO PADRÃO/CPU)**: Use se você for rodar apenas no processador.
 
+#### Passo 5: Como Rodar e Usar (A Hora da Verdade) 🎮
+Agora que tudo está instalado, veja como abrir o painel de controle pelo **Anaconda Prompt**:
+
+1. **Ative o ambiente virtual** (VITAL):
+   ```bash
+   conda activate C:\IA_dublagem\env
+   ```
+2. Entre na pasta do projeto:
+   ```bash
+   cd C:\IA_dublagem
+   ```
+3. Digite o comando para o que você deseja fazer:
+   - Para dublar **Jogos**: `python app_jogos.py`
+   - Para dublar **Vídeos**: `python app_videos.py`
+4. O terminal mostrará que o servidor Flask está ativo.
+5. **Abra o seu navegador** (Chrome ou Edge) e digite: `http://localhost:5000`
+
 ---
 
 ### 🛠️ Configuração do FFmpeg FULL (Obrigatório)
@@ -63,6 +85,11 @@ Diferente do FFmpeg comum, você precisa da versão **completa** para gerar arqu
 
 ### 🕹️ Como Usar (App Jogos vs App Vídeos)
 
+> [!WARNING]
+> **⚠️ ESTADO DO DESENVOLVIMENTO**: 
+> O motor **`app_jogos.py`** é o foco principal das atualizações atuais e está em sua versão mais estável e inteligente. 
+> O motor **`app_videos.py`** está **desatualizado** e pode apresentar falhas ou comportamentos inesperados. Uma reconstrução completa para o motor de vídeos está nos planos para as próximas versões!
+
 O PhoenixDub possui dois motores independentes:
 
 *   **Dublagem de Jogos (`app_jogos.py`)**: Para arquivos de áudio extraídos de games (WAV/MP3). Possui sistema agêntico que respeita a duração original e usa o estilo do personagem.
@@ -75,7 +102,7 @@ O PhoenixDub possui dois motores independentes:
 | Problema | Solução |
 | :--- | :--- |
 | **"Invalid audio stream" ou erro MP3** | Você está usando o FFmpeg básico. Instale o **FFmpeg FULL** como descrito acima. |
-| **"Out of Memory" ou Erro 1455** | Você não fechou o LM Studio quando o programa pediu. Feche-o para liberar VRAM. |
+| **"Out of Memory" or Error 1455** | Você não fechou o LM Studio quando o programa pediu. Feche-o para liberar VRAM. |
 | **"espeak-ng not found"** | Você esqueceu o Passo 1. Instale o eSpeak-NG e reinicie o PC. |
 | **O som da dublagem sai mudo** | Verifique se o eSpeak-NG está instalado corretamente. |
 | **Erro 1234 (Connection Refused)** | O LM Studio não está com o "Start Server" ligado. |
@@ -94,14 +121,12 @@ Para conhecer todas as pessoas e tecnologias envolvidas no PhoenixDub, veja o ar
 > - **Video Card**: **NVIDIA RTX 2060** (6GB) recommended for "Turbo Mode". A video card provides much higher speeds, but the system is 100% functional on the processor alone.
 > - **Memory**: Minimum 16 GB RAM.
 
-### 🌟 What's New in 2026.09 (PHOENIX-STABLE-TIME)
+### 🌟 What's New in v0.10 (TURBO-PATCH-UNLEASHED)
+*   **Turbo Mode Activated**: Disabled internal AI reasoning for up to 10x speed boost on i5/i7 CPUs.
+*   **Universal Hardware Support**: Smart auto-detection for NVIDIA (CUDA), AMD (ROCm), Apple (MPS), and CPU.
 *   **AI Video Editing**: The `App_videos` engine now features **Magic Cut**, automatically removing silences and recording errors.
-*   **Persistent Project Odometer**: The system now saves and resumes total processing time across sessions.
-*   **Real-Time Time Dashboard**: Integrated wall clock and per-segment timers for all AI stages.
-*   **Dual Chatterbox Engine (ONNX + Torch)**: ONNX acceleration support for RTX GPUs and legacy CPUs.
-*   **LM Studio Integration**: Translation via Gemma 4 (Local Host) to avoid external API failures.
-
----
+*   **Thinking Scrubber**: Filter to eliminate AI "thought leaks" in translations.
+*   **Web Interface Auto-Detect**: Language and speaker options now default to "Auto-Detect".
 
 ### 🚀 Installation Tutorial (Step-by-Step)
 
@@ -130,6 +155,25 @@ python setup.py
 *   **Option [ 2 ] (TURBO/RTX MODE)**: Use if you have an NVIDIA RTX card.
 *   **Option [ 3 ] (STANDARD/CPU MODE)**: Use if you are running on the processor only.
 
+#### Step 5: How to Run and Use 🎮
+Now that everything is installed, here's how to launch the control panel via **Anaconda Prompt**:
+
+1. **Activate the virtual environment** (VITAL):
+   ```bash
+   conda activate C:\IA_dublagem\env
+   ```
+2. Navigate to the project folder:
+   ```bash
+   cd C:\IA_dublagem
+   ```
+3. Type the command for your desired task:
+   - For **Game** dubbing: `python app_jogos.py`
+   - For **Video** dubbing: `python app_videos.py`
+4. The terminal will show that the Flask server is active.
+5. **Open your browser** (Chrome or Edge) and type: `http://localhost:5000`
+6. **Done!** The intelligent panel will appear, and you can start dubbing.
+
+
 ---
 
 ### 🛠️ FFmpeg FULL Setup (Mandatory)
@@ -145,6 +189,11 @@ Unlike basic FFmpeg, you need the **Full** build to support MP3 encoding and hig
 ---
 
 ### 🕹️ How to Use (Game App vs Video App)
+
+> [!WARNING]
+> **⚠️ DEVELOPMENT STATUS**: 
+> The **`app_jogos.py`** engine is the primary focus of current updates and is in its most stable and intelligent state. 
+> The **`app_videos.py`** engine is currently **outdated** and may experience bugs or unexpected behavior. A complete overhaul for the video engine is planned for future releases!
 
 PhoenixDub features two independent engines:
 
