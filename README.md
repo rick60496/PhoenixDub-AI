@@ -13,6 +13,11 @@
 
 **PhoenixDub AI** é uma solução completa de **edição de vídeo e dublagem automatizada** de nível profissional. Projetado para alta precisão, fluxo natural e extrema resiliência, o PhoenixDub utiliza IAs de última geração para processar, editar e sincronizar vídeos e jogos em Português (PT-BR) de forma inteligente.
 
+Meu site que tem todos os projetos que fiz até o momento
+https://narravox.github.io/bio/
+
+
+
 > [!IMPORTANTE]
 > - **Processador**: Otimizado para **Intel** (6ª geração ou superior). Compatibilidade total para rodar apenas no processador.
 > - **Placa de Vídeo**: Recomendado **NVIDIA RTX 2060** (6GB) para o "Modo Turbo". A placa de vídeo entrega muito mais velocidade, mas o sistema funciona 100% apenas com o processador.
